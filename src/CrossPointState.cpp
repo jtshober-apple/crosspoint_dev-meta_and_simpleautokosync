@@ -52,6 +52,11 @@ void CrossPointState::toJson(JsonDocument& doc) const {
   doc["recentOverlaySleepFill"] = recentOverlaySleepFill;
   doc["readerActivityLoadCount"] = readerActivityLoadCount;
   doc["lastSleepFromReader"] = lastSleepFromReader;
+  doc["kosyncUploadPending"] = kosyncUploadPending;
+  if (kosyncUploadPending) {
+    doc["kosyncPendingXpath"] = kosyncPendingXpath;
+    doc["kosyncPendingPct"] = kosyncPendingPct;
+  }
   doc["showBootScreen"] = showBootScreen;
 }
 
@@ -89,6 +94,13 @@ bool CrossPointState::fromJson(JsonVariantConst doc) {
   }
   readerActivityLoadCount = doc["readerActivityLoadCount"] | static_cast<uint8_t>(0);
   lastSleepFromReader = doc["lastSleepFromReader"] | false;
+  kosyncUploadPending = doc["kosyncUploadPending"] | false;
+  kosyncPendingXpath = doc["kosyncPendingXpath"] | "";
+  kosyncPendingPct = doc["kosyncPendingPct"] | 0.0f;
+  if (!kosyncUploadPending) {
+    kosyncPendingXpath.clear();
+    kosyncPendingPct = 0.0f;
+  }
   showBootScreen = doc["showBootScreen"] | true;
   return true;
 }

@@ -21,9 +21,12 @@
 #include <limits>
 #include <string>
 
+#include <WiFi.h>
+
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "activities/reader/ReaderUtils.h"
+#include "util/SilentKoSyncPush.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "images/Logo120.h"
@@ -521,18 +524,30 @@ void releaseSdFontCachesForDecode(const GfxRenderer& renderer) {
 void SleepActivity::onEnter() {
   Activity::onEnter();
 
+  // Attempt a silent KoSync upload while WiFi is still up (plugin events may
+  // have connected it just before goToSleep was called).
+  if (APP_STATE.kosyncUploadPending && WiFi.status() == WL_CONNECTED) {
+    silentKoSyncUpload(APP_STATE.openEpubPath, APP_STATE.kosyncPendingXpath, APP_STATE.kosyncPendingPct);
+  }
+
   const bool renderQuickResume =
       SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
       (fromTimeout &&
        SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
 
   if (renderQuickResume) {
-    // Quick Resume keeps the current frame as-is, so the driver's inversion
-    // state stays too: a night-mode page sleeps in night polarity, and the
-    // moon icon inverts with it at transfer like any other draw.
+    // Quick Resume keeps the current frame as-is; no full redraw and no X overlay.
     return renderLastScreenSleepScreen();
   }
 
+  renderSleepScreenContent();
+
+  if (APP_STATE.kosyncUploadPending) {
+    drawSyncPendingIndicator();
+  }
+}
+
+void SleepActivity::renderSleepScreenContent() const {
   const bool frameWasInverted = display.isInverted();
 
   // The remaining sleep screens draw fresh content in normal polarity. This
@@ -582,6 +597,28 @@ void SleepActivity::onEnter() {
     default:
       return renderDefaultSleepScreen();
   }
+}
+
+void SleepActivity::drawSyncPendingIndicator() const {
+  // Draw a bold X in the top-right corner to indicate that a KoSync upload
+  // is still pending (device slept from a book before sync completed).
+  // The sleep screen was already committed, so this is an additional partial
+  // refresh on top of it.
+  constexpr int MARGIN = 12;
+  constexpr int SIZE = 28;     // X spans SIZE x SIZE pixels
+  constexpr int LINE_W = 4;    // stroke width
+
+  const int w = renderer.getScreenWidth();
+  const int x0 = w - MARGIN - SIZE;
+  const int y0 = MARGIN;
+  const int x1 = x0 + SIZE;
+  const int y1 = y0 + SIZE;
+
+  // Fill a white background square so the X reads clearly on any image.
+  renderer.fillRect(x0 - 2, y0 - 2, SIZE + 4, SIZE + 4, false);
+  renderer.drawLine(x0, y0, x1, y1, LINE_W, true);
+  renderer.drawLine(x1, y0, x0, y1, LINE_W, true);
+  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }
 
 void SleepActivity::renderCustomSleepScreen() const {

@@ -22,6 +22,14 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   uint8_t recentOverlaySleepFill = 0;
   uint8_t readerActivityLoadCount = 0;
   bool lastSleepFromReader = false;
+  // Set when the device sleeps from inside a book with KoSync credentials
+  // configured and cleared once the upload succeeds. SleepActivity reads this
+  // to draw the pending-sync X indicator and attempt a silent upload.
+  bool kosyncUploadPending = false;
+  // Pre-computed KoReader progress for the pending sleep-upload (xpath + percentage).
+  // Valid only while kosyncUploadPending is true.
+  std::string kosyncPendingXpath;
+  float kosyncPendingPct = 0.0f;
   bool showBootScreen = true;
 
   static const char* getFilePath() { return "/.crosspoint/state.json"; }

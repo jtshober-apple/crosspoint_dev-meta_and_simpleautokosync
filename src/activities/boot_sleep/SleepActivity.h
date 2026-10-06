@@ -24,5 +24,12 @@ class SleepActivity final : public Activity {
   void renderTransparentCustomSleepScreen() const;
   void renderBlankSleepScreen() const;
 
+  // Dispatches to the appropriate renderXxxSleepScreen() helper based on
+  // settings and context (inverted frame, reader origin, etc.).
+  void renderSleepScreenContent() const;
+  // Draws the "sync pending" X indicator as a partial overlay after the main
+  // sleep screen has already been committed to the display.
+  void drawSyncPendingIndicator() const;
+
   bool fromTimeout = false;
 };

@@ -1057,6 +1057,28 @@ bool EpubReaderActivity::launchKOReaderSync() {
   return true;
 }
 
+void EpubReaderActivity::prepareForSleep() {
+  if (epub && KOREADER_STORE.hasCredentials()) {
+    const int currentPage = section ? section->currentPage : nextPageNumber;
+    const int totalPages = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;
+    if (saveProgress(currentSpineIndex, currentPage, totalPages)) {
+      CrossPointPosition localPos = getCurrentPosition();
+      // ActivityManager::prepareForSleep() holds a RenderLock so the render task
+      // is blocked. Taking the FrameBufferLoan here is safe: same pattern as
+      // launchKOReaderSync(), but epub stays open (we are not navigating away).
+      GfxRenderer::FrameBufferLoan loan(renderer);
+      const SavedProgressPosition localKoPos = ProgressMapper::toSavedProgress(epub, localPos);
+      APP_STATE.kosyncUploadPending = true;
+      APP_STATE.kosyncPendingXpath = localKoPos.xpath;
+      APP_STATE.kosyncPendingPct = localKoPos.percentage;
+      LOG_DBG("KOSync", "Sleep-sync queued: xpath=%s pct=%.3f", localKoPos.xpath.c_str(), localKoPos.percentage);
+    } else {
+      LOG_ERR("KOSync", "Sleep-sync: could not save progress; upload skipped");
+    }
+  }
+  ReaderActivity::prepareForSleep();
+}
+
 void EpubReaderActivity::applyInitialOrientation() {
   ReaderActivity::applyInitialOrientation();
   appliedOrientation = SETTINGS.orientation;

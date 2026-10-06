@@ -1,11 +1,13 @@
 #include "FileBrowserActivity.h"
 
+#include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Memory.h>
 #include <Utf8.h>
+#include <Xtc.h>
 
 #include <algorithm>
 #include <functional>
@@ -152,7 +154,25 @@ void FileBrowserActivity::provideRow(void* ctx, const uint16_t index, fui::ListI
   auto* self = static_cast<FileBrowserActivity*>(ctx);
   if (index >= self->files.size()) return;
   const std::string& entry = self->files[index];
-  formatFileName(entry, self->rowNameBuf, sizeof(self->rowNameBuf));
+
+  // Prefer the stored metadata title (set on book open or rename) over the raw
+  // filename stem.  The recent-books list is small so the linear search is cheap.
+  bool usedStoredTitle = false;
+  if (entry.back() != '/') {
+    const std::string fullPath =
+        (self->basepath == "/" ? self->basepath : self->basepath + "/") + entry;
+    for (const RecentBook& book : RECENT_BOOKS.getBooks()) {
+      if (book.path == fullPath && !book.title.empty()) {
+        snprintf(self->rowNameBuf, sizeof(self->rowNameBuf), "%s", book.title.c_str());
+        utf8ComposeNfcInPlace(self->rowNameBuf);
+        usedStoredTitle = true;
+        break;
+      }
+    }
+  }
+  if (!usedStoredTitle) {
+    formatFileName(entry, self->rowNameBuf, sizeof(self->rowNameBuf));
+  }
   item.label = self->rowNameBuf;
   formatFileExtension(entry, self->rowExtBuf, sizeof(self->rowExtBuf));
   if (self->rowExtBuf[0] != '\0') {
@@ -494,6 +514,22 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
   }
 
   RECENT_BOOKS.updatePath(oldPath, newPath, oldCachePath, newCachePath);
+
+  // Re-extract title, author and cover from the file at its new path so the
+  // file browser and recents list immediately show correct metadata.
+  if (FsHelpers::hasReflowableBookExtension(newPath)) {
+    Epub epub(newPath, "/.crosspoint");
+    std::string title, author;
+    if (epub.loadMetadata(title, author)) {
+      RECENT_BOOKS.updateBook(newPath, title, author, epub.getThumbBmpPath());
+    }
+  } else if (FsHelpers::hasXtcExtension(newPath)) {
+    Xtc xtc(newPath, "/.crosspoint");
+    if (xtc.load()) {
+      RECENT_BOOKS.updateBook(newPath, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath());
+    }
+  }
+
   if (APP_STATE.openEpubPath == oldPath) {
     APP_STATE.openEpubPath = newPath;
     if (!APP_STATE.saveToFile()) LOG_ERR("FileBrowser", "Failed to save renamed open-book path");
