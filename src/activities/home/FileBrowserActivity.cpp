@@ -46,8 +46,10 @@ bool moveStatePath(const std::string& oldPath, const std::string& newPath, bool&
   moved = false;
   if (oldPath.empty() || !Storage.exists(oldPath.c_str())) return true;
   if (Storage.exists(newPath.c_str())) {
-    LOG_ERR("FileBrowser", "Rename state target already exists: %s", newPath.c_str());
-    return false;
+    // Destination already exists — a previous partial rename left state behind.
+    // The destination is already in the right place; skip the move and proceed.
+    LOG_ERR("FileBrowser", "Rename state: dest exists, skipping move: %s", newPath.c_str());
+    return true;
   }
   moved = Storage.rename(oldPath.c_str(), newPath.c_str());
   if (!moved) LOG_ERR("FileBrowser", "Failed to move rename state: %s -> %s", oldPath.c_str(), newPath.c_str());
@@ -526,8 +528,14 @@ void FileBrowserActivity::startRename() {
 
 void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const std::string& oldEntry,
                                              const std::string& newStem, const std::string& extension) {
-  const std::string newEntry = newStem + extension;
-  if (newStem.empty() || newEntry.size() >= NAME_BUFFER_SIZE || !FsHelpers::isSafePathComponent(newEntry)) {
+  // Strip leading/trailing whitespace — FAT32 silently rejects filenames that
+  // start or end with a space, and the keyboard can deliver them unintentionally.
+  std::string stem = newStem;
+  while (!stem.empty() && static_cast<unsigned char>(stem.front()) <= ' ') stem.erase(stem.begin());
+  while (!stem.empty() && static_cast<unsigned char>(stem.back()) <= ' ') stem.pop_back();
+
+  const std::string newEntry = stem + extension;
+  if (stem.empty() || newEntry.size() >= NAME_BUFFER_SIZE || !FsHelpers::isSafePathComponent(newEntry)) {
     LOG_ERR("FileBrowser", "Invalid rename target: %s", newEntry.c_str());
     return;
   }
@@ -537,6 +545,9 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
   const std::string newPath = (parentPath == "/" ? parentPath : parentPath + "/") + newEntry;
   if (Storage.exists(newPath.c_str())) {
     LOG_ERR("FileBrowser", "Rename target already exists: %s", newPath.c_str());
+    const char* okLabel = tr(STR_OK_BUTTON);
+    optionPopup.showMessage(tr(STR_RENAME_FAILED), newPath.c_str(), &okLabel, 1, 0, [](int) {});
+    requestUpdate();
     return;
   }
 
@@ -556,6 +567,9 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
     LOG_ERR("FileBrowser", "Failed to rename file: %s -> %s", oldPath.c_str(), newPath.c_str());
     rollBackStatePath(oldBookmarkPath, newBookmarkPath, bookmarksMoved);
     rollBackStatePath(oldCachePath, newCachePath, cacheMoved);
+    const char* okLabel = tr(STR_OK_BUTTON);
+    optionPopup.showMessage(tr(STR_RENAME_FAILED), oldPath.c_str(), &okLabel, 1, 0, [](int) {});
+    requestUpdate();
     return;
   }
 
