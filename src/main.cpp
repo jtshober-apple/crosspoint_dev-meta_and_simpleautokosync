@@ -313,7 +313,10 @@ static void deliverSleepPluginEvents() {
   // Any connect-flagged queued event justifies the join, not only
   // sleep.enter: reader.session is queued while reading and delivered on this
   // same sleep, and a progress-sync plugin usually subscribes to it alone.
-  if (!pluginevents::wantsConnectAny()) return;
+  const bool kosyncNeedsWifi = APP_STATE.kosyncUploadPending &&
+                               KOREADER_STORE.hasCredentials() &&
+                               !APP_STATE.openEpubPath.empty();
+  if (!pluginevents::wantsConnectAny() && !kosyncNeedsWifi) return;
   if (powerManager.getBatteryPercentage() < 20) return;
   const auto cred = WIFI_STORE.findCredential(WIFI_STORE.getLastConnectedSsid());
   if (!cred) return;
