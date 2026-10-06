@@ -536,8 +536,11 @@ void SleepActivity::onEnter() {
        SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
 
   if (renderQuickResume) {
-    // Quick Resume keeps the current frame as-is; no full redraw and no X overlay.
-    return renderLastScreenSleepScreen();
+    renderLastScreenSleepScreen();
+    if (APP_STATE.kosyncUploadPending) {
+      drawSyncPendingIndicator();
+    }
+    return;
   }
 
   renderSleepScreenContent();
