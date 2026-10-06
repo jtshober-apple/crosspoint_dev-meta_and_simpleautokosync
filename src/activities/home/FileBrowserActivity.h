@@ -26,6 +26,10 @@ class FileBrowserActivity final : public UiListActivity {
   // Files state
   std::string basepath = "/";
   std::vector<std::string> files;
+  // Parallel to files[]: display title for each entry (EPUB/XTC metadata or
+  // RecentBooksStore); empty string means fall back to the filename.
+  // Rebuilt by populateFileTitles() every time loadFiles() runs.
+  std::vector<std::string> fileDisplayTitles;
   std::unique_ptr<char[]> fileNameBuffer;
   OptionPopup optionPopup;
 
@@ -65,6 +69,7 @@ class FileBrowserActivity final : public UiListActivity {
 
   // Data loading
   void loadFiles();
+  void populateFileTitles();
   size_t findEntry(const std::string& name) const;
 
  public:

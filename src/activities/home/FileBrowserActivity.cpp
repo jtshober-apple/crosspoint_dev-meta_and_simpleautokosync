@@ -140,6 +140,48 @@ void FileBrowserActivity::loadFiles() {
   }
   root.close();
   FsHelpers::sortFileList(files);
+  populateFileTitles();
+}
+
+// Rebuilds fileDisplayTitles[] in parallel with files[]. For each book entry
+// the RecentBooksStore is checked first (in-memory, no I/O); only when no
+// stored title exists does this open the file to read its embedded metadata.
+// Subsequent loadFiles() calls are fast once the store is warm.
+void FileBrowserActivity::populateFileTitles() {
+  const std::string prefix = (basepath == "/" ? "/" : basepath + "/");
+  fileDisplayTitles.clear();
+  fileDisplayTitles.reserve(files.size());
+
+  for (const auto& entry : files) {
+    if (entry.empty() || entry.back() == '/') {
+      fileDisplayTitles.emplace_back();
+      continue;
+    }
+    const std::string fullPath = prefix + entry;
+
+    // Fast path: stored title from a previous open or rename.
+    std::string title;
+    for (const RecentBook& book : RECENT_BOOKS.getBooks()) {
+      if (book.path == fullPath && !book.title.empty()) {
+        title = book.title;
+        break;
+      }
+    }
+
+    // Slow path (one-time per book): parse embedded metadata from the file.
+    if (title.empty()) {
+      if (FsHelpers::hasReflowableBookExtension(fullPath)) {
+        Epub epub(fullPath, "/.crosspoint");
+        std::string author;
+        epub.loadMetadata(title, author);
+      } else if (FsHelpers::hasXtcExtension(fullPath)) {
+        Xtc xtc(fullPath, "/.crosspoint");
+        if (xtc.load()) title = xtc.getTitle();
+      }
+    }
+
+    fileDisplayTitles.emplace_back(std::move(title));
+  }
 }
 
 // fui::ListProps::rowProvider — formats row `index` from files[index] into the
@@ -155,20 +197,15 @@ void FileBrowserActivity::provideRow(void* ctx, const uint16_t index, fui::ListI
   if (index >= self->files.size()) return;
   const std::string& entry = self->files[index];
 
-  // Prefer the stored metadata title (set on book open or rename) over the raw
-  // filename stem.  The recent-books list is small so the linear search is cheap.
+  // fileDisplayTitles[] is populated by populateFileTitles() on every
+  // loadFiles() call; it covers ALL files (not just recently opened ones)
+  // so the display is correct even for books that have never been opened.
   bool usedStoredTitle = false;
-  if (entry.back() != '/') {
-    const std::string fullPath =
-        (self->basepath == "/" ? self->basepath : self->basepath + "/") + entry;
-    for (const RecentBook& book : RECENT_BOOKS.getBooks()) {
-      if (book.path == fullPath && !book.title.empty()) {
-        snprintf(self->rowNameBuf, sizeof(self->rowNameBuf), "%s", book.title.c_str());
-        utf8ComposeNfcInPlace(self->rowNameBuf);
-        usedStoredTitle = true;
-        break;
-      }
-    }
+  if (entry.back() != '/' && index < self->fileDisplayTitles.size() &&
+      !self->fileDisplayTitles[index].empty()) {
+    snprintf(self->rowNameBuf, sizeof(self->rowNameBuf), "%s", self->fileDisplayTitles[index].c_str());
+    utf8ComposeNfcInPlace(self->rowNameBuf);
+    usedStoredTitle = true;
   }
   if (!usedStoredTitle) {
     formatFileName(entry, self->rowNameBuf, sizeof(self->rowNameBuf));
@@ -464,8 +501,17 @@ void FileBrowserActivity::startRename() {
   if (cleanBasePath.back() != '/') cleanBasePath += "/";
   const std::string oldPath = cleanBasePath + oldEntry;
   const std::string extension = getFileExtension(oldEntry);
-  const std::string initialStem = utf8ComposeNfc(oldEntry.substr(0, oldEntry.size() - extension.size()));
+  // Pre-fill with the embedded title when available so the user confirms
+  // rather than re-types; fall back to the filename stem for non-book files.
+  std::string initialStem;
+  const size_t selIdx = static_cast<size_t>(nav.selected);
+  if (selIdx < fileDisplayTitles.size() && !fileDisplayTitles[selIdx].empty()) {
+    initialStem = utf8ComposeNfc(fileDisplayTitles[selIdx]);
+  } else {
+    initialStem = utf8ComposeNfc(oldEntry.substr(0, oldEntry.size() - extension.size()));
+  }
   const size_t maxStemLength = NAME_BUFFER_SIZE - extension.size() - 1;
+  if (initialStem.size() > maxStemLength) initialStem.resize(maxStemLength);
   auto keyboard = makeUniqueNoThrow<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_RENAME), initialStem,
                                                            maxStemLength, InputType::Text);
   if (!keyboard) {
