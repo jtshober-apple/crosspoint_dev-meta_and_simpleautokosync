@@ -562,60 +562,63 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
     LOG_ERR("FileBrowser", "Rename aborted: unsafe path component: %s", newEntry.c_str());
     return;
   }
-  LOG_ERR("FileBrowser", "Rename check: newEntry='%s' oldEntry(nfc)='%s'", newEntry.c_str(),
-          utf8ComposeNfc(oldEntry).c_str());
-  if (newEntry == utf8ComposeNfc(oldEntry)) {
-    LOG_ERR("FileBrowser", "Rename aborted: new name equals old name");
-    return;
-  }
+  const bool nameUnchanged = (newEntry == utf8ComposeNfc(oldEntry));
+  LOG_DBG("FileBrowser", "Rename check: newEntry='%s' oldEntry(nfc)='%s' unchanged=%d", newEntry.c_str(),
+          utf8ComposeNfc(oldEntry).c_str(), nameUnchanged);
 
   const std::string parentPath = FsHelpers::extractFolderPath(oldPath);
   const std::string newPath = (parentPath == "/" ? parentPath : parentPath + "/") + newEntry;
-  if (Storage.exists(newPath.c_str())) {
-    LOG_ERR("FileBrowser", "Rename target already exists: %s", newPath.c_str());
-    const char* okLabel = tr(STR_OK_BUTTON);
-    optionPopup.showMessage(tr(STR_RENAME_FAILED), newPath.c_str(), &okLabel, 1, 0, [](int) {});
-    requestUpdate();
-    return;
-  }
-
   const std::string oldCachePath = getBookCachePath(oldPath);
   const std::string newCachePath = getBookCachePath(newPath);
-  const bool hasBookmarks = FsHelpers::hasReflowableBookExtension(oldPath);
-  const std::string oldBookmarkPath = hasBookmarks ? BookmarkUtil::getBookmarkPath(oldPath) : "";
-  const std::string newBookmarkPath = hasBookmarks ? BookmarkUtil::getBookmarkPath(newPath) : "";
-  bool cacheMoved = false;
-  bool bookmarksMoved = false;
-  if (!moveStatePath(oldCachePath, newCachePath, cacheMoved)) return;
-  if (!moveStatePath(oldBookmarkPath, newBookmarkPath, bookmarksMoved)) {
-    rollBackStatePath(oldCachePath, newCachePath, cacheMoved);
-    return;
-  }
-  LOG_ERR("FileBrowser", "Attempting Storage.rename: '%s' -> '%s'", oldPath.c_str(), newPath.c_str());
-  if (!Storage.rename(oldPath.c_str(), newPath.c_str())) {
-    LOG_ERR("FileBrowser", "Storage.rename FAILED: '%s' -> '%s'", oldPath.c_str(), newPath.c_str());
-    rollBackStatePath(oldBookmarkPath, newBookmarkPath, bookmarksMoved);
-    rollBackStatePath(oldCachePath, newCachePath, cacheMoved);
-    const char* okLabel = tr(STR_OK_BUTTON);
-    optionPopup.showMessage(tr(STR_RENAME_FAILED), oldPath.c_str(), &okLabel, 1, 0, [](int) {});
-    requestUpdate();
-    return;
+
+  if (!nameUnchanged) {
+    // ── Physical rename ─────────────────────────────────────────────────────
+    if (Storage.exists(newPath.c_str())) {
+      LOG_ERR("FileBrowser", "Rename target already exists: %s", newPath.c_str());
+      const char* okLabel = tr(STR_OK_BUTTON);
+      optionPopup.showMessage(tr(STR_RENAME_FAILED), newPath.c_str(), &okLabel, 1, 0, [](int) {});
+      requestUpdate();
+      return;
+    }
+
+    const bool hasBookmarks = FsHelpers::hasReflowableBookExtension(oldPath);
+    const std::string oldBookmarkPath = hasBookmarks ? BookmarkUtil::getBookmarkPath(oldPath) : "";
+    const std::string newBookmarkPath = hasBookmarks ? BookmarkUtil::getBookmarkPath(newPath) : "";
+    bool cacheMoved = false;
+    bool bookmarksMoved = false;
+    if (!moveStatePath(oldCachePath, newCachePath, cacheMoved)) return;
+    if (!moveStatePath(oldBookmarkPath, newBookmarkPath, bookmarksMoved)) {
+      rollBackStatePath(oldCachePath, newCachePath, cacheMoved);
+      return;
+    }
+    LOG_DBG("FileBrowser", "Storage.rename: '%s' -> '%s'", oldPath.c_str(), newPath.c_str());
+    if (!Storage.rename(oldPath.c_str(), newPath.c_str())) {
+      LOG_ERR("FileBrowser", "Storage.rename failed: '%s' -> '%s'", oldPath.c_str(), newPath.c_str());
+      rollBackStatePath(oldBookmarkPath, newBookmarkPath, bookmarksMoved);
+      rollBackStatePath(oldCachePath, newCachePath, cacheMoved);
+      const char* okLabel = tr(STR_OK_BUTTON);
+      optionPopup.showMessage(tr(STR_RENAME_FAILED), oldPath.c_str(), &okLabel, 1, 0, [](int) {});
+      requestUpdate();
+      return;
+    }
+
+    RECENT_BOOKS.updatePath(oldPath, newPath, oldCachePath, newCachePath);
+
+    if (APP_STATE.openEpubPath == oldPath) {
+      APP_STATE.openEpubPath = newPath;
+      if (!APP_STATE.saveToFile()) LOG_ERR("FileBrowser", "Failed to save renamed open-book path");
+    }
   }
 
-  RECENT_BOOKS.updatePath(oldPath, newPath, oldCachePath, newCachePath);
-
-  // ── Metadata refresh after rename ──────────────────────────────────────
-  // Store the typed stem immediately so the display updates without any delay.
-  // A background task then joins WiFi and queries Open Library, promoting the
-  // entry with the authoritative title/author/cover on success.
-  // Opening the epub on the UI thread is deliberately avoided here: the cache
-  // directory hash changes on rename so the Epub object would re-parse the
-  // entire epub zip to build a new cache, which can stall the UI for seconds.
+  // ── Metadata refresh ────────────────────────────────────────────────────
+  // Store the typed stem immediately; background task queries Open Library
+  // and promotes the entry with authoritative title/author/cover on success.
+  // Epub is intentionally not opened here: after a rename the cache path hash
+  // changes, so Epub() would re-parse the full zip on the UI thread.
   if (FsHelpers::hasReflowableBookExtension(newPath)) {
     RECENT_BOOKS.addBook(newPath, stem, "", "");
     BookMetadataFetcher::launchBackgroundFetch(stem, newCachePath, newPath);
   } else if (FsHelpers::hasXtcExtension(newPath)) {
-    // XTC metadata is a fast binary read — no re-parse risk.
     Xtc xtc(newPath, "/.crosspoint");
     if (xtc.load() && !xtc.getTitle().empty()) {
       RECENT_BOOKS.addBook(newPath, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath());
@@ -623,11 +626,6 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
       RECENT_BOOKS.addBook(newPath, stem, "", "");
     }
     BookMetadataFetcher::launchBackgroundFetch(stem, newCachePath, newPath);
-  }
-
-  if (APP_STATE.openEpubPath == oldPath) {
-    APP_STATE.openEpubPath = newPath;
-    if (!APP_STATE.saveToFile()) LOG_ERR("FileBrowser", "Failed to save renamed open-book path");
   }
 
   {
