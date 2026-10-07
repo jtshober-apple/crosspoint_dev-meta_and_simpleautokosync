@@ -5,10 +5,12 @@
 #include <Logging.h>
 #include <Txt.h>
 #include <WiFi.h>
+#include <freertos/task.h>
 
 #include <string>
 
 #include "HttpDownloader.h"
+#include "RecentBooksStore.h"
 #include "WifiCredentialStore.h"
 #include "util/UrlUtils.h"
 
@@ -46,6 +48,35 @@ std::string encodeQuery(const std::string& raw) {
     }
   }
   return out;
+}
+
+// Background fetch state — only one fetch runs at a time.
+struct FetchTaskArgs {
+  std::string query;
+  std::string cachePath;
+  std::string bookPath;
+};
+
+static volatile bool s_fetchRunning = false;
+
+static void fetchTaskFn(void* arg) {
+  auto* args = static_cast<FetchTaskArgs*>(arg);
+
+  if (BookMetadataFetcher::ensureWifiConnected()) {
+    const BookMetadata meta = BookMetadataFetcher::fetch(args->query, args->cachePath);
+    if (!meta.title.empty()) {
+      LOG_INF("BookMeta", "Background fetch complete: '%s' by '%s'", meta.title.c_str(), meta.author.c_str());
+      RECENT_BOOKS.addBook(args->bookPath, meta.title, meta.author, meta.coverBmpPath);
+    } else {
+      LOG_DBG("BookMeta", "Background fetch returned no title for '%s'", args->query.c_str());
+    }
+  } else {
+    LOG_DBG("BookMeta", "Background fetch: no WiFi available");
+  }
+
+  delete args;
+  s_fetchRunning = false;
+  vTaskDelete(nullptr);
 }
 
 }  // namespace
@@ -181,4 +212,28 @@ BookMetadata BookMetadataFetcher::fetch(const std::string& query, const std::str
   }
 
   return result;
+}
+
+void BookMetadataFetcher::launchBackgroundFetch(const std::string& query, const std::string& cachePath,
+                                                const std::string& bookPath) {
+  if (s_fetchRunning) {
+    LOG_DBG("BookMeta", "Background fetch already in flight – skipping for '%s'", query.c_str());
+    return;
+  }
+
+  auto* args = new (std::nothrow) FetchTaskArgs{query, cachePath, bookPath};
+  if (!args) {
+    LOG_ERR("BookMeta", "OOM: FetchTaskArgs for '%s'", query.c_str());
+    return;
+  }
+
+  s_fetchRunning = true;
+  TaskHandle_t handle = nullptr;
+  if (xTaskCreate(fetchTaskFn, "BookMetaFetch", 8192, args, 1, &handle) != pdPASS) {
+    LOG_ERR("BookMeta", "Failed to create background fetch task");
+    delete args;
+    s_fetchRunning = false;
+  } else {
+    LOG_DBG("BookMeta", "Background fetch launched for '%s'", query.c_str());
+  }
 }

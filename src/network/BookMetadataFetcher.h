@@ -15,8 +15,8 @@
  * so they are immediately available to the cover-grid home screen.
  */
 struct BookMetadata {
-  std::string title;   // empty if lookup failed / no result
-  std::string author;  // empty if not found in result
+  std::string title;         // empty if lookup failed / no result
+  std::string author;        // empty if not found in result
   std::string coverBmpPath;  // path to written BMP file; empty if no cover
 };
 
@@ -41,5 +41,21 @@ BookMetadata fetch(const std::string& query, const std::string& cachePath);
  * timeout. Returns true if WiFi is (or was already) connected.
  */
 bool ensureWifiConnected();
+
+/**
+ * Fire-and-forget background fetch: joins WiFi if needed, queries Open Library,
+ * and on success calls RECENT_BOOKS.addBook() to promote the online title/author/cover
+ * over whatever embedded metadata was stored at rename time.
+ *
+ * Spawns a FreeRTOS task (8 KB stack) and returns immediately — never blocks the
+ * caller. Only one background fetch runs at a time; duplicate calls while a fetch
+ * is in flight are silently dropped.
+ *
+ * @param query      Search terms (typically the user-typed filename stem).
+ * @param cachePath  The book's cache directory; must already exist for cover download.
+ * @param bookPath   The book's new path after rename (used as the RECENT_BOOKS key).
+ */
+void launchBackgroundFetch(const std::string& query, const std::string& cachePath,
+                           const std::string& bookPath);
 
 }  // namespace BookMetadataFetcher
