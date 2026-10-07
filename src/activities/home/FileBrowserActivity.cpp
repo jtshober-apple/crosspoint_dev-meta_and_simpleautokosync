@@ -150,7 +150,11 @@ void FileBrowserActivity::loadFiles() {
 // stored title exists does this open the file to read its embedded metadata.
 // Subsequent loadFiles() calls are fast once the store is warm.
 void FileBrowserActivity::populateFileTitles() {
-  const std::string prefix = (basepath == "/" ? "/" : basepath + "/");
+  // Build the directory prefix with exactly one trailing slash. activateSelected()
+  // appends "/" to basepath before opening a book, so basepath may already end with
+  // "/" when we arrive here via onEnter() after the reader exits. Using basepath + "/"
+  // unconditionally would produce "/books//" which misses every RecentBooksStore entry.
+  const std::string prefix = basepath.back() == '/' ? basepath : basepath + "/";
   fileDisplayTitles.clear();
   fileDisplayTitles.reserve(files.size());
 
@@ -521,8 +525,13 @@ void FileBrowserActivity::startRename() {
     return;
   }
   startActivityForResult(std::move(keyboard), [this, oldPath, oldEntry, extension](const ActivityResult& result) {
-    if (result.isCancelled) return;
-    renameSelectedFile(oldPath, oldEntry, std::get<KeyboardResult>(result.data).text, extension);
+    if (result.isCancelled) {
+      LOG_DBG("FileBrowser", "Rename cancelled by user");
+      return;
+    }
+    const std::string& newStem = std::get<KeyboardResult>(result.data).text;
+    LOG_DBG("FileBrowser", "Rename confirmed: '%s' stem='%s'", oldEntry.c_str(), newStem.c_str());
+    renameSelectedFile(oldPath, oldEntry, newStem, extension);
   });
 }
 
@@ -535,11 +544,23 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
   while (!stem.empty() && static_cast<unsigned char>(stem.back()) <= ' ') stem.pop_back();
 
   const std::string newEntry = stem + extension;
-  if (stem.empty() || newEntry.size() >= NAME_BUFFER_SIZE || !FsHelpers::isSafePathComponent(newEntry)) {
-    LOG_ERR("FileBrowser", "Invalid rename target: %s", newEntry.c_str());
+  LOG_DBG("FileBrowser", "renameSelectedFile: '%s' -> '%s'", oldEntry.c_str(), newEntry.c_str());
+  if (stem.empty()) {
+    LOG_ERR("FileBrowser", "Rename aborted: stem is empty after trim");
     return;
   }
-  if (newEntry == utf8ComposeNfc(oldEntry)) return;
+  if (newEntry.size() >= NAME_BUFFER_SIZE) {
+    LOG_ERR("FileBrowser", "Rename aborted: name too long (%zu >= %zu)", newEntry.size(), NAME_BUFFER_SIZE);
+    return;
+  }
+  if (!FsHelpers::isSafePathComponent(newEntry)) {
+    LOG_ERR("FileBrowser", "Rename aborted: unsafe path component: %s", newEntry.c_str());
+    return;
+  }
+  if (newEntry == utf8ComposeNfc(oldEntry)) {
+    LOG_DBG("FileBrowser", "Rename aborted: new name equals old name (no change)");
+    return;
+  }
 
   const std::string parentPath = FsHelpers::extractFolderPath(oldPath);
   const std::string newPath = (parentPath == "/" ? parentPath : parentPath + "/") + newEntry;
