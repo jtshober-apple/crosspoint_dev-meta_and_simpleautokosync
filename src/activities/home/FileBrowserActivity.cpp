@@ -601,31 +601,23 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
   RECENT_BOOKS.updatePath(oldPath, newPath, oldCachePath, newCachePath);
 
   // ── Metadata refresh after rename ──────────────────────────────────────
-  // Tier 2/3 (embedded) runs synchronously so the UI updates immediately.
-  // Tier 1 (online Open Library) runs in a background task and promotes the
-  // entry in RECENT_BOOKS when it completes, without blocking the rename flow.
-  if (FsHelpers::hasReflowableBookExtension(newPath) || FsHelpers::hasXtcExtension(newPath)) {
-    // ── Tier 2/3: embedded or stem (synchronous, fast) ──────────────────
-    if (FsHelpers::hasReflowableBookExtension(newPath)) {
-      Epub epub(newPath, "/.crosspoint");
-      std::string title, author;
-      epub.loadMetadata(title, author);
-      const std::string displayTitle = title.empty() ? stem : title;
-      LOG_DBG("FileBrowser", "Embedded metadata: '%s' by '%s'", displayTitle.c_str(), author.c_str());
-      RECENT_BOOKS.addBook(newPath, displayTitle, author, epub.getThumbBmpPath());
+  // Store the typed stem immediately so the display updates without any delay.
+  // A background task then joins WiFi and queries Open Library, promoting the
+  // entry with the authoritative title/author/cover on success.
+  // Opening the epub on the UI thread is deliberately avoided here: the cache
+  // directory hash changes on rename so the Epub object would re-parse the
+  // entire epub zip to build a new cache, which can stall the UI for seconds.
+  if (FsHelpers::hasReflowableBookExtension(newPath)) {
+    RECENT_BOOKS.addBook(newPath, stem, "", "");
+    BookMetadataFetcher::launchBackgroundFetch(stem, newCachePath, newPath);
+  } else if (FsHelpers::hasXtcExtension(newPath)) {
+    // XTC metadata is a fast binary read — no re-parse risk.
+    Xtc xtc(newPath, "/.crosspoint");
+    if (xtc.load() && !xtc.getTitle().empty()) {
+      RECENT_BOOKS.addBook(newPath, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath());
     } else {
-      // XTC
-      Xtc xtc(newPath, "/.crosspoint");
-      if (xtc.load() && !xtc.getTitle().empty()) {
-        RECENT_BOOKS.addBook(newPath, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath());
-      } else {
-        RECENT_BOOKS.addBook(newPath, stem, "", "");
-      }
+      RECENT_BOOKS.addBook(newPath, stem, "", "");
     }
-
-    // ── Tier 1: online lookup (background, non-blocking) ────────────────
-    // Joins WiFi if needed, queries Open Library, then promotes the entry in
-    // RECENT_BOOKS with the authoritative title/author/cover on success.
     BookMetadataFetcher::launchBackgroundFetch(stem, newCachePath, newPath);
   }
 
