@@ -52,8 +52,11 @@ bool moveStatePath(const std::string& oldPath, const std::string& newPath, bool&
     return true;
   }
   moved = Storage.rename(oldPath.c_str(), newPath.c_str());
+  // A state-file (cache dir, bookmarks) rename failure is non-fatal: log it
+  // and let the main file rename proceed. The old cache is orphaned and will
+  // be regenerated when the book is next opened. Never block on this.
   if (!moved) LOG_ERR("FileBrowser", "Failed to move rename state: %s -> %s", oldPath.c_str(), newPath.c_str());
-  return moved;
+  return true;
 }
 
 void rollBackStatePath(const std::string& oldPath, const std::string& newPath, const bool moved) {
