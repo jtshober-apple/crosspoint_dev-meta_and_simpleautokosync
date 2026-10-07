@@ -599,11 +599,25 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
 
   RECENT_BOOKS.updatePath(oldPath, newPath, oldCachePath, newCachePath);
 
-  // Store the user's chosen filename stem as the display title. Re-extracting
-  // the epub's embedded <dc:title> would show whatever the epub says internally
-  // (often the old or cryptic name), not the name the user just picked.
-  // Author and thumb survive via updatePath; addBook here only updates the title.
-  RECENT_BOOKS.addBook(newPath, stem, "", "");
+  // Extract embedded metadata (title, author, cover) from the file at its new
+  // path so the browser and recents list immediately show the real book info.
+  // Falls back to the user's chosen stem when the epub has no embedded title.
+  if (FsHelpers::hasReflowableBookExtension(newPath)) {
+    Epub epub(newPath, "/.crosspoint");
+    std::string title, author;
+    if (epub.loadMetadata(title, author) && !title.empty()) {
+      RECENT_BOOKS.addBook(newPath, title, author, epub.getThumbBmpPath());
+    } else {
+      RECENT_BOOKS.addBook(newPath, stem, author, epub.getThumbBmpPath());
+    }
+  } else if (FsHelpers::hasXtcExtension(newPath)) {
+    Xtc xtc(newPath, "/.crosspoint");
+    if (xtc.load() && !xtc.getTitle().empty()) {
+      RECENT_BOOKS.addBook(newPath, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath());
+    } else {
+      RECENT_BOOKS.addBook(newPath, stem, "", "");
+    }
+  }
 
   if (APP_STATE.openEpubPath == oldPath) {
     APP_STATE.openEpubPath = newPath;
