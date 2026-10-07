@@ -599,22 +599,11 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
 
   RECENT_BOOKS.updatePath(oldPath, newPath, oldCachePath, newCachePath);
 
-  // Re-extract title, author and cover from the file at its new path so the
-  // file browser and recents list immediately show correct metadata.
-  // addBook creates a new entry when none exists, or updates in-place if one
-  // does — safe for files that were never opened before the rename.
-  if (FsHelpers::hasReflowableBookExtension(newPath)) {
-    Epub epub(newPath, "/.crosspoint");
-    std::string title, author;
-    if (epub.loadMetadata(title, author)) {
-      RECENT_BOOKS.addBook(newPath, title, author, epub.getThumbBmpPath());
-    }
-  } else if (FsHelpers::hasXtcExtension(newPath)) {
-    Xtc xtc(newPath, "/.crosspoint");
-    if (xtc.load()) {
-      RECENT_BOOKS.addBook(newPath, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath());
-    }
-  }
+  // Store the user's chosen filename stem as the display title. Re-extracting
+  // the epub's embedded <dc:title> would show whatever the epub says internally
+  // (often the old or cryptic name), not the name the user just picked.
+  // Author and thumb survive via updatePath; addBook here only updates the title.
+  RECENT_BOOKS.addBook(newPath, stem, "", "");
 
   if (APP_STATE.openEpubPath == oldPath) {
     APP_STATE.openEpubPath = newPath;
