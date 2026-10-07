@@ -21,6 +21,7 @@
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "fontIds.h"
+#include "network/BookMetadataFetcher.h"
 #include "util/BookCacheUtils.h"
 #include "util/BookmarkUtil.h"
 
@@ -599,23 +600,48 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
 
   RECENT_BOOKS.updatePath(oldPath, newPath, oldCachePath, newCachePath);
 
-  // Extract embedded metadata (title, author, cover) from the file at its new
-  // path so the browser and recents list immediately show the real book info.
-  // Falls back to the user's chosen stem when the epub has no embedded title.
-  if (FsHelpers::hasReflowableBookExtension(newPath)) {
-    Epub epub(newPath, "/.crosspoint");
-    std::string title, author;
-    if (epub.loadMetadata(title, author) && !title.empty()) {
-      RECENT_BOOKS.addBook(newPath, title, author, epub.getThumbBmpPath());
-    } else {
-      RECENT_BOOKS.addBook(newPath, stem, author, epub.getThumbBmpPath());
+  // ── Metadata refresh after rename ──────────────────────────────────────
+  // Priority: (1) online Open Library lookup, (2) embedded epub/xtc metadata,
+  // (3) user-typed stem.  The first source that provides a non-empty title wins
+  // for title/author; the cover from that same source is used for the thumbnail.
+  if (FsHelpers::hasReflowableBookExtension(newPath) || FsHelpers::hasXtcExtension(newPath)) {
+    // ── Tier 1: online lookup ──────────────────────────────────────────────
+    // Use the typed stem as the search query (more likely to match than whatever
+    // cryptic name the file had before rename).  Falls through on any failure.
+    bool onlineOk = false;
+    if (BookMetadataFetcher::ensureWifiConnected()) {
+      const BookMetadata meta = BookMetadataFetcher::fetch(stem, newCachePath);
+      if (!meta.title.empty()) {
+        LOG_INF("FileBrowser", "Online metadata: '%s' by '%s'", meta.title.c_str(), meta.author.c_str());
+        // meta.coverBmpPath is the downloaded+converted BMP, or empty when the
+        // cover download failed. The home cover grid regenerates from the epub's
+        // embedded cover on the next display pass when coverPath is empty.
+        RECENT_BOOKS.addBook(newPath, meta.title, meta.author, meta.coverBmpPath);
+        onlineOk = true;
+      } else {
+        LOG_DBG("FileBrowser", "Online lookup returned no title – falling back to embedded metadata");
+      }
     }
-  } else if (FsHelpers::hasXtcExtension(newPath)) {
-    Xtc xtc(newPath, "/.crosspoint");
-    if (xtc.load() && !xtc.getTitle().empty()) {
-      RECENT_BOOKS.addBook(newPath, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath());
-    } else {
-      RECENT_BOOKS.addBook(newPath, stem, "", "");
+
+    if (!onlineOk) {
+      // ── Tier 2: embedded metadata ────────────────────────────────────────
+      if (FsHelpers::hasReflowableBookExtension(newPath)) {
+        Epub epub(newPath, "/.crosspoint");
+        std::string title, author;
+        epub.loadMetadata(title, author);
+        const std::string displayTitle = title.empty() ? stem : title;
+        LOG_DBG("FileBrowser", "Embedded metadata: '%s' by '%s'", displayTitle.c_str(), author.c_str());
+        RECENT_BOOKS.addBook(newPath, displayTitle, author, epub.getThumbBmpPath());
+      } else {
+        // XTC
+        Xtc xtc(newPath, "/.crosspoint");
+        if (xtc.load() && !xtc.getTitle().empty()) {
+          RECENT_BOOKS.addBook(newPath, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath());
+        } else {
+          // ── Tier 3: typed stem ──────────────────────────────────────────
+          RECENT_BOOKS.addBook(newPath, stem, "", "");
+        }
+      }
     }
   }
 

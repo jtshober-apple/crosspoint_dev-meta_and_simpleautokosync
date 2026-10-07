@@ -17,6 +17,7 @@
 #include "KOReaderDocumentId.h"
 #include "MappedInputManager.h"
 #include "ProgressComparison.h"
+#include "CrossPointState.h"
 #include "ReaderUtils.h"
 #include "SilentRestart.h"
 #include "activities/ActivityManager.h"
@@ -387,6 +388,16 @@ void KOReaderSyncActivity::performUpload() {
     RenderLock lock(*this);
     state = UPLOAD_COMPLETE;
   }
+
+  // The upload succeeded: clear the sleep-pending flag so the X indicator no
+  // longer appears on the next sleep screen.
+  if (APP_STATE.kosyncUploadPending) {
+    APP_STATE.kosyncUploadPending = false;
+    APP_STATE.kosyncPendingXpath.clear();
+    APP_STATE.kosyncPendingPct = 0.0f;
+    APP_STATE.saveToFile();
+  }
+
   markAutoReturn();
   requestUpdate(true);
 }

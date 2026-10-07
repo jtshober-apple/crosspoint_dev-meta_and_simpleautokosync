@@ -535,9 +535,16 @@ void SleepActivity::onEnter() {
       (fromTimeout &&
        SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
 
+  // Show the X indicator only when the device slept out of a book with a
+  // pending upload that didn't make it through (WiFi down, upload failed, etc.).
+  // Do NOT show it for sleeps from the home screen or other non-reader views:
+  // the pending flag may carry over from a prior session, and the X would be
+  // misleading on an unrelated sleep screen.
+  const bool showSyncPending = APP_STATE.kosyncUploadPending && APP_STATE.lastSleepFromReader;
+
   if (renderQuickResume) {
     renderLastScreenSleepScreen();
-    if (APP_STATE.kosyncUploadPending) {
+    if (showSyncPending) {
       drawSyncPendingIndicator();
     }
     return;
@@ -545,7 +552,7 @@ void SleepActivity::onEnter() {
 
   renderSleepScreenContent();
 
-  if (APP_STATE.kosyncUploadPending) {
+  if (showSyncPending) {
     drawSyncPendingIndicator();
   }
 }
