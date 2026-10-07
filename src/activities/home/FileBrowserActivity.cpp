@@ -530,11 +530,12 @@ void FileBrowserActivity::startRename() {
   }
   startActivityForResult(std::move(keyboard), [this, oldPath, oldEntry, extension](const ActivityResult& result) {
     if (result.isCancelled) {
-      LOG_DBG("FileBrowser", "Rename cancelled by user");
+      LOG_ERR("FileBrowser", "Rename result isCancelled=true for '%s'", oldEntry.c_str());
       return;
     }
     const std::string& newStem = std::get<KeyboardResult>(result.data).text;
-    LOG_DBG("FileBrowser", "Rename confirmed: '%s' stem='%s'", oldEntry.c_str(), newStem.c_str());
+    LOG_ERR("FileBrowser", "Rename confirmed: old='%s' newStem='%s' ext='%s'", oldEntry.c_str(), newStem.c_str(),
+            extension.c_str());
     renameSelectedFile(oldPath, oldEntry, newStem, extension);
   });
 }
@@ -550,7 +551,7 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
   const std::string newEntry = stem + extension;
   LOG_DBG("FileBrowser", "renameSelectedFile: '%s' -> '%s'", oldEntry.c_str(), newEntry.c_str());
   if (stem.empty()) {
-    LOG_ERR("FileBrowser", "Rename aborted: stem is empty after trim");
+    LOG_ERR("FileBrowser", "Rename aborted: stem empty after trim (raw='%s')", newStem.c_str());
     return;
   }
   if (newEntry.size() >= NAME_BUFFER_SIZE) {
@@ -561,8 +562,10 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
     LOG_ERR("FileBrowser", "Rename aborted: unsafe path component: %s", newEntry.c_str());
     return;
   }
+  LOG_ERR("FileBrowser", "Rename check: newEntry='%s' oldEntry(nfc)='%s'", newEntry.c_str(),
+          utf8ComposeNfc(oldEntry).c_str());
   if (newEntry == utf8ComposeNfc(oldEntry)) {
-    LOG_DBG("FileBrowser", "Rename aborted: new name equals old name (no change)");
+    LOG_ERR("FileBrowser", "Rename aborted: new name equals old name");
     return;
   }
 
@@ -588,8 +591,9 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
     rollBackStatePath(oldCachePath, newCachePath, cacheMoved);
     return;
   }
+  LOG_ERR("FileBrowser", "Attempting Storage.rename: '%s' -> '%s'", oldPath.c_str(), newPath.c_str());
   if (!Storage.rename(oldPath.c_str(), newPath.c_str())) {
-    LOG_ERR("FileBrowser", "Failed to rename file: %s -> %s", oldPath.c_str(), newPath.c_str());
+    LOG_ERR("FileBrowser", "Storage.rename FAILED: '%s' -> '%s'", oldPath.c_str(), newPath.c_str());
     rollBackStatePath(oldBookmarkPath, newBookmarkPath, bookmarksMoved);
     rollBackStatePath(oldCachePath, newCachePath, cacheMoved);
     const char* okLabel = tr(STR_OK_BUTTON);
