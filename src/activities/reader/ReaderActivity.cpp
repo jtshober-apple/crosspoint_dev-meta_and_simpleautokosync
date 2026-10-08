@@ -89,7 +89,23 @@ void ReaderActivity::rememberBookOnceRendered() {
   bookRemembered = true;
   APP_STATE.openEpubPath = bookPath;
   APP_STATE.saveToFile();
-  RECENT_BOOKS.addBook(bookPath, getBookTitle(), getBookAuthor(), getBookThumbBmpPath());
+
+  // Prefer any display title/author/cover already stored in RECENT_BOOKS (e.g. fetched
+  // from Open Library after a rename) over the raw values from the book file itself,
+  // so a post-rename metadata fetch is not overwritten by the raw internal title.
+  std::string title = getBookTitle();
+  std::string author = getBookAuthor();
+  std::string cover = getBookThumbBmpPath();
+  for (const RecentBook& rb : RECENT_BOOKS.getBooks()) {
+    if (rb.path == bookPath) {
+      if (!rb.title.empty()) title = rb.title;
+      if (!rb.author.empty()) author = rb.author;
+      if (!rb.coverBmpPath.empty()) cover = rb.coverBmpPath;
+      break;
+    }
+  }
+  RECENT_BOOKS.addBook(bookPath, title, author, cover);
+
   const pluginevents::Var openVars[] = {{"book", bookPath.c_str()}};
   pluginevents::emit(pluginevents::Event::ReaderOpen, openVars, 1);
 }

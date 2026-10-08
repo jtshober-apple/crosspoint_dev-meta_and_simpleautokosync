@@ -41,6 +41,7 @@
 #include "ReaderToolbarUi.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
+#include "WifiCredentialStore.h"
 #include "network/BookMetadataFetcher.h"
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
@@ -273,6 +274,7 @@ bool EpubReaderActivity::loadBook() {
     const std::string pendingQuery = BookMetadataFetcher::readPendingQuery(cachePath);
     if (!pendingQuery.empty()) {
       GUI.drawPopup(renderer, tr(STR_CONNECTING_SAVED_WIFI));
+      WIFI_STORE.loadFromFile();  // ensure credentials are loaded before attempting connection
       if (BookMetadataFetcher::ensureWifiConnected()) {
         GUI.drawPopup(renderer, tr(STR_FETCHING_METADATA));
         const BookMetadata meta = BookMetadataFetcher::fetch(pendingQuery, cachePath);

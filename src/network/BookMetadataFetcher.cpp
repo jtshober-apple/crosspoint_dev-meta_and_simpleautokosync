@@ -247,28 +247,25 @@ BookMetadata BookMetadataFetcher::fetch(const std::string& query, const std::str
     // Match Epub::getCoverBmpPath() so the home cover grid picks it up.
     const std::string destBmp = cachePath + "/cover_legacy_v2.bmp";
 
-    if (Storage.exists(destBmp.c_str())) {
-      // A cover BMP already exists (from a prior epub parse); keep it.
-      result.coverBmpPath = destBmp;
-      LOG_DBG("BookMeta", "Existing cover BMP kept: %s", destBmp.c_str());
-    } else {
-      const std::string coverUrl =
-          std::string(kCoverBase) + std::to_string(coverId) + "-L.jpg";
-      LOG_DBG("BookMeta", "Downloading cover: %s", coverUrl.c_str());
+    const std::string coverUrl =
+        std::string(kCoverBase) + std::to_string(coverId) + "-L.jpg";
+    LOG_DBG("BookMeta", "Downloading cover: %s", coverUrl.c_str());
 
-      Storage.remove(kCoverTmpJpg);
-      const auto dlResult = HttpDownloader::downloadToFile(coverUrl, kCoverTmpJpg);
-      if (dlResult == HttpDownloader::OK) {
-        if (Txt::convertCoverImageToBmp(kCoverTmpJpg, destBmp)) {
-          result.coverBmpPath = destBmp;
-          LOG_INF("BookMeta", "Cover saved: %s", destBmp.c_str());
-        } else {
-          LOG_INF("BookMeta", "Cover BMP conversion failed");
-        }
-        Storage.remove(kCoverTmpJpg);
+    Storage.remove(kCoverTmpJpg);
+    const auto dlResult = HttpDownloader::downloadToFile(coverUrl, kCoverTmpJpg);
+    if (dlResult == HttpDownloader::OK) {
+      Storage.remove(destBmp.c_str());  // replace any existing cover (embedded or prior OL)
+      if (Txt::convertCoverImageToBmp(kCoverTmpJpg, destBmp)) {
+        result.coverBmpPath = destBmp;
+        LOG_INF("BookMeta", "Cover saved: %s", destBmp.c_str());
       } else {
-        LOG_INF("BookMeta", "Cover download failed (err=%d)", dlResult);
+        LOG_INF("BookMeta", "Cover BMP conversion failed");
       }
+      Storage.remove(kCoverTmpJpg);
+    } else {
+      LOG_INF("BookMeta", "Cover download failed (err=%d)", dlResult);
+      // Fall back to any existing cover so the field is not left empty.
+      if (Storage.exists(destBmp.c_str())) result.coverBmpPath = destBmp;
     }
   }
 
