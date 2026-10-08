@@ -67,33 +67,58 @@ void rollBackStatePath(const std::string& oldPath, const std::string& newPath, c
   }
 }
 
-// Full-screen metadata progress card.  titleVal/authorVal/coverVal are
-// the current status strings; nullptr renders as "…".
+// Full-screen metadata progress card.
+// titleVal/authorVal/coverVal: current status; nullptr renders as "…".
+// sourceNote: optional small attribution line drawn at bottom (e.g. "via Open Library"); nullptr = omit.
 static void drawMetadataProgressScreen(GfxRenderer& renderer,
                                         const char* titleVal,
                                         const char* authorVal,
-                                        const char* coverVal) {
+                                        const char* coverVal,
+                                        const char* sourceNote = nullptr) {
   renderer.clearScreen();
+  const int w = renderer.getScreenWidth();
   const int h = renderer.getScreenHeight();
   const int lineH = renderer.getLineHeight(UI_12_FONT_ID);
-  const int margin = 40;
+  const int smallLineH = renderer.getLineHeight(UI_10_FONT_ID);
+  const int margin = 32;
+  const int maxWidth = w - margin * 2;
 
-  // Header centred ~1/4 down
-  renderer.drawCenteredText(UI_12_FONT_ID, h / 4 - lineH, tr(STR_FETCHING_METADATA), /*black=*/true, EpdFontFamily::BOLD);
+  // Header
+  const int headerY = h / 5;
+  renderer.drawCenteredText(UI_12_FONT_ID, headerY, tr(STR_FETCHING_METADATA), /*black=*/true, EpdFontFamily::BOLD);
 
-  // Three info rows below the header
-  const int baseY = h / 4 + lineH;
-  const int rowH = lineH + 14;
+  int y = headerY + lineH + lineH / 2;  // a gap below the header
 
-  static char line[256];
-  snprintf(line, sizeof(line), "%s: %s", tr(STR_TITLE), titleVal ? titleVal : "\xe2\x80\xa6");
-  renderer.drawText(UI_12_FONT_ID, margin, baseY, line);
+  // Helper to draw a labelled row, wrapping the value.
+  // Returns y advanced past all drawn lines.
+  static char lineBuf[300];
 
-  snprintf(line, sizeof(line), "%s: %s", tr(STR_AUTHOR), authorVal ? authorVal : "\xe2\x80\xa6");
-  renderer.drawText(UI_12_FONT_ID, margin, baseY + rowH, line);
+  // Title row — up to 2 wrapped lines
+  snprintf(lineBuf, sizeof(lineBuf), "%s: %s", tr(STR_TITLE), titleVal ? titleVal : "\xe2\x80\xa6");
+  const auto titleLines = renderer.wrappedText(UI_12_FONT_ID, lineBuf, maxWidth, 2);
+  for (const auto& l : titleLines) {
+    renderer.drawText(UI_12_FONT_ID, margin, y, l.c_str());
+    y += lineH;
+  }
+  y += 6;
 
-  snprintf(line, sizeof(line), "%s: %s", tr(STR_COVER), coverVal ? coverVal : "\xe2\x80\xa6");
-  renderer.drawText(UI_12_FONT_ID, margin, baseY + rowH * 2, line);
+  // Author row — 1 line
+  snprintf(lineBuf, sizeof(lineBuf), "%s: %s", tr(STR_AUTHOR), authorVal ? authorVal : "\xe2\x80\xa6");
+  const auto authorLines = renderer.wrappedText(UI_12_FONT_ID, lineBuf, maxWidth, 1);
+  for (const auto& l : authorLines) {
+    renderer.drawText(UI_12_FONT_ID, margin, y, l.c_str());
+    y += lineH;
+  }
+  y += 6;
+
+  // Cover row — 1 line (status is always short)
+  snprintf(lineBuf, sizeof(lineBuf), "%s: %s", tr(STR_COVER), coverVal ? coverVal : "\xe2\x80\xa6");
+  renderer.drawText(UI_12_FONT_ID, margin, y, lineBuf);
+
+  // Optional attribution note at the bottom in small font
+  if (sourceNote && *sourceNote) {
+    renderer.drawCenteredText(UI_10_FONT_ID, h - smallLineH * 2, sourceNote, /*black=*/true, EpdFontFamily::REGULAR);
+  }
 
   renderer.displayBuffer();
 }
@@ -718,7 +743,7 @@ void FileBrowserActivity::fetchMetadataViaWifi(const std::string& query, const s
 
         // Phase 3: final screen — all results known; hold briefly so the user
         // can read the result before the file browser returns.
-        drawMetadataProgressScreen(renderer, titleVal, authorVal, coverStatus);
+        drawMetadataProgressScreen(renderer, titleVal, authorVal, coverStatus, tr(STR_METADATA_SOURCE));
         delay(1800);
 
         RECENT_BOOKS.addBook(bookPath, sr.title, sr.author, coverBmpPath);
