@@ -15,12 +15,17 @@
 #include "util/UrlUtils.h"
 
 // Open Library search endpoint – no API key required.
-// Returns JSON with docs[] array; we take the first hit.
+// Uses the `title` parameter (not `q`) for a title-field-specific search,
+// which returns far more precise matches than full-text.
 // Doc: https://openlibrary.org/dev/docs/api#anchor_search
-static constexpr const char* kSearchBase = "https://openlibrary.org/search.json?limit=1&fields=title,author_name,cover_i&q=";
+static constexpr const char* kSearchBase =
+    "https://openlibrary.org/search.json?limit=1&fields=title,author_name,cover_i,cover_edition_key&title=";
 
-// Cover image CDN – /b/id/<id>-L.jpg (L = large, ~500px tall)
-static constexpr const char* kCoverBase = "https://covers.openlibrary.org/b/id/";
+// Cover image CDN.
+// Preferred: /b/olid/<edition-olid>-L.jpg — edition-matched cover.
+// Fallback:  /b/id/<cover_i>-L.jpg — work-level cover (any edition).
+static constexpr const char* kCoverOlidBase = "https://covers.openlibrary.org/b/olid/";
+static constexpr const char* kCoverIdBase   = "https://covers.openlibrary.org/b/id/";
 
 // Temp path for the downloaded JPEG before BMP conversion.
 static constexpr const char* kCoverTmpJpg = "/.crosspoint/meta_cover_tmp.jpg";
@@ -208,12 +213,14 @@ BookMetadataFetcher::BookSearchResult BookMetadataFetcher::fetchSearchResult(con
   }
 
   // ── 2. Parse JSON ────────────────────────────────────────────────────────
-  // { "numFound": N, "docs": [ { "title": "…", "author_name": ["…"], "cover_i": 12345 } ] }
+  // { "numFound": N, "docs": [ { "title": "…", "author_name": ["…"],
+  //                              "cover_i": 12345, "cover_edition_key": "OL12345M" } ] }
   JsonDocument filter;
   filter["numFound"] = true;
   filter["docs"][0]["title"] = true;
   filter["docs"][0]["author_name"][0] = true;
   filter["docs"][0]["cover_i"] = true;
+  filter["docs"][0]["cover_edition_key"] = true;
 
   JsonDocument doc;
   const DeserializationError err =
@@ -229,8 +236,10 @@ BookMetadataFetcher::BookSearchResult BookMetadataFetcher::fetchSearchResult(con
   result.title = hit["title"] | "";
   result.author = hit["author_name"][0] | "";
   result.coverId = hit["cover_i"] | 0;
+  result.coverEditionKey = hit["cover_edition_key"] | "";
 
-  LOG_INF("BookMeta", "Hit: '%s' by '%s' (cover_i=%d)", result.title.c_str(), result.author.c_str(), result.coverId);
+  LOG_INF("BookMeta", "Hit: '%s' by '%s' (cover_i=%d editionKey='%s')",
+          result.title.c_str(), result.author.c_str(), result.coverId, result.coverEditionKey.c_str());
 
   if (result.title.empty()) {
     LOG_INF("BookMeta", "Result has empty title – discarding");
@@ -239,13 +248,23 @@ BookMetadataFetcher::BookSearchResult BookMetadataFetcher::fetchSearchResult(con
   return result;
 }
 
-bool BookMetadataFetcher::downloadCover(int coverId, const std::string& cachePath, std::string& outCoverBmpPath) {
+bool BookMetadataFetcher::downloadCover(int coverId, const std::string& coverEditionKey,
+                                        const std::string& cachePath, std::string& outCoverBmpPath) {
   outCoverBmpPath.clear();
-  if (coverId <= 0 || cachePath.empty() || !Storage.exists(cachePath.c_str())) return false;
+  const bool hasOlid = !coverEditionKey.empty();
+  if (!hasOlid && coverId <= 0) return false;
+  if (cachePath.empty() || !Storage.exists(cachePath.c_str())) return false;
 
   // Match Epub::getCoverBmpPath() so the home cover grid picks it up.
   const std::string destBmp = cachePath + "/cover_legacy_v2.bmp";
-  const std::string coverUrl = std::string(kCoverBase) + std::to_string(coverId) + "-L.jpg";
+
+  // Prefer the edition OLID URL (edition-matched cover) over the work-level cover_i.
+  std::string coverUrl;
+  if (hasOlid) {
+    coverUrl = std::string(kCoverOlidBase) + coverEditionKey + "-L.jpg";
+  } else {
+    coverUrl = std::string(kCoverIdBase) + std::to_string(coverId) + "-L.jpg";
+  }
   LOG_DBG("BookMeta", "Downloading cover: %s", coverUrl.c_str());
 
   Storage.remove(kCoverTmpJpg);
@@ -273,7 +292,7 @@ BookMetadata BookMetadataFetcher::fetch(const std::string& query, const std::str
   result.title = sr.title;
   result.author = sr.author;
   if (!sr.title.empty()) {
-    downloadCover(sr.coverId, cachePath, result.coverBmpPath);
+    downloadCover(sr.coverId, sr.coverEditionKey, cachePath, result.coverBmpPath);
   }
   return result;
 }

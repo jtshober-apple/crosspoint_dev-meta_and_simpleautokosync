@@ -732,12 +732,14 @@ void FileBrowserActivity::fetchMetadataViaWifi(const std::string& query, const s
         // Phase 2: title + author known; start cover download if available.
         const char* titleVal = sr.title.c_str();
         const char* authorVal = sr.author.empty() ? nullptr : sr.author.c_str();
-        const char* coverStatus = sr.coverId > 0 ? tr(STR_METADATA_COVER_DOWNLOADING) : tr(STR_METADATA_COVER_NONE);
+        const char* coverStatus = (sr.coverId > 0 || !sr.coverEditionKey.empty())
+                                      ? tr(STR_METADATA_COVER_DOWNLOADING)
+                                      : tr(STR_METADATA_COVER_NONE);
         drawMetadataProgressScreen(renderer, titleVal, authorVal, coverStatus);
 
         std::string coverBmpPath;
-        if (sr.coverId > 0) {
-          BookMetadataFetcher::downloadCover(sr.coverId, cachePath, coverBmpPath);
+        if (sr.coverId > 0 || !sr.coverEditionKey.empty()) {
+          BookMetadataFetcher::downloadCover(sr.coverId, sr.coverEditionKey, cachePath, coverBmpPath);
           coverStatus = coverBmpPath.empty() ? tr(STR_METADATA_COVER_NONE) : tr(STR_METADATA_COVER_SAVED);
         }
 

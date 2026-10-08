@@ -24,9 +24,11 @@ namespace BookMetadataFetcher {
 
 // Result of the JSON search step only — no cover download.
 struct BookSearchResult {
-  std::string title;   // empty on failure or no match
-  std::string author;  // empty if not in result
-  int coverId = 0;     // Open Library cover_i; 0 = no cover available
+  std::string title;            // empty on failure or no match
+  std::string author;           // empty if not in result
+  int coverId = 0;              // Open Library cover_i (work-level); 0 = none
+  std::string coverEditionKey;  // OLID of the edition whose cover to use (e.g. "OL12345M");
+                                // preferred over coverId when non-empty
 };
 
 /**
@@ -37,12 +39,14 @@ BookSearchResult fetchSearchResult(const std::string& query);
 
 /**
  * Phase 2: Download and convert the Open Library cover image to BMP.
- * @param coverId          Open Library cover_i from fetchSearchResult.
+ * @param coverId          Open Library cover_i (work-level fallback); 0 = skip.
+ * @param coverEditionKey  OLID of the matched edition (preferred; e.g. "OL12345M"); empty = use coverId.
  * @param cachePath        Book's cache directory; must already exist.
  * @param outCoverBmpPath  Set to the saved BMP path on success.
  * @return true if the cover was downloaded and converted successfully.
  */
-bool downloadCover(int coverId, const std::string& cachePath, std::string& outCoverBmpPath);
+bool downloadCover(int coverId, const std::string& coverEditionKey,
+                   const std::string& cachePath, std::string& outCoverBmpPath);
 
 /**
  * Convenience wrapper: calls fetchSearchResult() then downloadCover().
