@@ -729,16 +729,22 @@ void FileBrowserActivity::fetchMetadataViaWifi(const std::string& query, const s
           return;
         }
 
-        // Phase 2: title + author known; start cover download if available.
+        // Phase 2: title + author known; determine cover status before rendering.
         const char* titleVal = sr.title.c_str();
         const char* authorVal = sr.author.empty() ? nullptr : sr.author.c_str();
-        const char* coverStatus = (sr.coverId > 0 || !sr.coverEditionKey.empty())
-                                      ? tr(STR_METADATA_COVER_DOWNLOADING)
-                                      : tr(STR_METADATA_COVER_NONE);
+
+        // If the book's own cover is already extracted in the cache, use it immediately
+        // and skip the Open Library cover fetch entirely.
+        std::string coverBmpPath = BookMetadataFetcher::getCachedCoverBmpPath(cachePath);
+        const bool hasEmbedded = !coverBmpPath.empty();
+        const bool canFetchOl = !hasEmbedded && (sr.coverId > 0 || !sr.coverEditionKey.empty());
+
+        const char* coverStatus = hasEmbedded  ? tr(STR_METADATA_COVER_EMBEDDED)
+                                  : canFetchOl ? tr(STR_METADATA_COVER_DOWNLOADING)
+                                               : tr(STR_METADATA_COVER_NONE);
         drawMetadataProgressScreen(renderer, titleVal, authorVal, coverStatus);
 
-        std::string coverBmpPath;
-        if (sr.coverId > 0 || !sr.coverEditionKey.empty()) {
+        if (canFetchOl) {
           BookMetadataFetcher::downloadCover(sr.coverId, sr.coverEditionKey, cachePath, coverBmpPath);
           coverStatus = coverBmpPath.empty() ? tr(STR_METADATA_COVER_NONE) : tr(STR_METADATA_COVER_SAVED);
         }

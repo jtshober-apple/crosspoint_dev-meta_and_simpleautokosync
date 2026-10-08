@@ -248,6 +248,14 @@ BookMetadataFetcher::BookSearchResult BookMetadataFetcher::fetchSearchResult(con
   return result;
 }
 
+static constexpr const char* kCoverBmpFilename = "/cover_legacy_v2.bmp";
+
+std::string BookMetadataFetcher::getCachedCoverBmpPath(const std::string& cachePath) {
+  if (cachePath.empty()) return "";
+  const std::string path = cachePath + kCoverBmpFilename;
+  return Storage.exists(path.c_str()) ? path : "";
+}
+
 bool BookMetadataFetcher::downloadCover(int coverId, const std::string& coverEditionKey,
                                         const std::string& cachePath, std::string& outCoverBmpPath) {
   outCoverBmpPath.clear();
@@ -256,7 +264,15 @@ bool BookMetadataFetcher::downloadCover(int coverId, const std::string& coverEdi
   if (cachePath.empty() || !Storage.exists(cachePath.c_str())) return false;
 
   // Match Epub::getCoverBmpPath() so the home cover grid picks it up.
-  const std::string destBmp = cachePath + "/cover_legacy_v2.bmp";
+  const std::string destBmp = cachePath + kCoverBmpFilename;
+
+  // If an embedded cover was already extracted during a prior book open, use it.
+  // Never overwrite it with an OL cover — embedded art is always the right edition.
+  if (Storage.exists(destBmp.c_str())) {
+    LOG_INF("BookMeta", "Embedded cover exists; skipping OL fetch");
+    outCoverBmpPath = destBmp;
+    return true;
+  }
 
   // Prefer the edition OLID URL (edition-matched cover) over the work-level cover_i.
   std::string coverUrl;
@@ -270,7 +286,7 @@ bool BookMetadataFetcher::downloadCover(int coverId, const std::string& coverEdi
   Storage.remove(kCoverTmpJpg);
   const auto dlResult = HttpDownloader::downloadToFile(coverUrl, kCoverTmpJpg);
   if (dlResult == HttpDownloader::OK) {
-    Storage.remove(destBmp.c_str());  // replace any existing cover (embedded or prior OL)
+    Storage.remove(destBmp.c_str());
     if (Txt::convertCoverImageToBmp(kCoverTmpJpg, destBmp)) {
       outCoverBmpPath = destBmp;
       LOG_INF("BookMeta", "Cover saved: %s", destBmp.c_str());

@@ -90,6 +90,13 @@ void launchBackgroundFetch(const std::string& query, const std::string& cachePat
  * @param cachePath  The book's cache directory (/.crosspoint/epub_<hash>).
  * @param query      The search query to retry (typically the user-typed stem).
  */
+/**
+ * Returns the path to an already-extracted cover BMP in cachePath if one exists,
+ * or an empty string if no cover has been cached yet.  Use this to avoid fetching
+ * an online cover when the book's own embedded cover is already available.
+ */
+std::string getCachedCoverBmpPath(const std::string& cachePath);
+
 void setMetadataPending(const std::string& cachePath, const std::string& query);
 void clearMetadataPending(const std::string& cachePath);
 bool hasMetadataPending(const std::string& cachePath);
