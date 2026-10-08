@@ -890,13 +890,20 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     }
   }
 
-  // Draw sync-fail X icon (left of right cluster)
+  // Draw sync-fail boxed-X icon (left of right cluster)
   if (showSyncFailIcon) {
-    constexpr int kSyncIconGap = 8;
+    constexpr int kSyncIconGap = 4;
+    constexpr int kSyncBoxPad = 2;  // inner padding around the "X" glyph
     const int xIconWidth = renderer.getTextWidth(SMALL_FONT_ID, "X");
-    const int iconX = rightClusterX - rightClusterWidth - (rightClusterWidth > 0 ? kSyncIconGap : 0) - xIconWidth;
-    renderer.drawText(SMALL_FONT_ID, iconX, textY, "X");
-    rightClusterWidth += xIconWidth + (rightClusterWidth > 0 ? kSyncIconGap : 0);
+    const int glyphH = renderer.getTextHeight(SMALL_FONT_ID);
+    const int boxW = xIconWidth + kSyncBoxPad * 2;
+    const int boxH = glyphH + kSyncBoxPad * 2;
+    const int gap = rightClusterWidth > 0 ? kSyncIconGap : 0;
+    const int boxX = rightClusterX - rightClusterWidth - gap - boxW;
+    const int boxY = textY - glyphH - kSyncBoxPad + 1;
+    renderer.drawRect(boxX, boxY, boxW, boxH);
+    renderer.drawText(SMALL_FONT_ID, boxX + kSyncBoxPad, textY, "X");
+    rightClusterWidth += boxW + gap;
   }
 
   // Draw Bookmark

@@ -1275,7 +1275,7 @@ bool EpubReaderActivity::pageTurn(bool isForwardTurn) {
       // 30-page auto-sync check (forward turns only; don't fire while a sync is already running).
       if (autoSyncState != AutoSyncState::FAILED_MID_READ && !pendingAutoSync && !s_kosyncRunning &&
           KOREADER_STORE.hasCredentials()) {
-        if (++pagesSinceLastAutoSync >= 30) {
+        if (++pagesSinceLastAutoSync >= 15) {
           pagesSinceLastAutoSync = 0;
           currentSyncIsInitial = false;
           pendingAutoSync = true;
