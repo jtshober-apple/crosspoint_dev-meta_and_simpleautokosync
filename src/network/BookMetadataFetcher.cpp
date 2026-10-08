@@ -168,13 +168,13 @@ std::string BookMetadataFetcher::readPendingQuery(const std::string& cachePath) 
   return buf;
 }
 
-BookMetadata BookMetadataFetcher::fetch(const std::string& query, const std::string& cachePath) {
-  BookMetadata result;
+BookMetadataFetcher::BookSearchResult BookMetadataFetcher::fetchSearchResult(const std::string& query) {
+  BookSearchResult result;
 
   // TLS heap sanity check (wolfSSL needs ~40KB of contiguous free RAM)
   if (ESP.getFreeHeap() < HttpDownloader::MIN_TLS_FREE_HEAP ||
       ESP.getMaxAllocHeap() < HttpDownloader::MIN_TLS_MAX_ALLOC) {
-    LOG_INF("BookMeta", "Heap too low for TLS metadata fetch (free=%u maxAlloc=%u)", (unsigned)ESP.getFreeHeap(),
+    LOG_INF("BookMeta", "Heap too low for TLS fetch (free=%u maxAlloc=%u)", (unsigned)ESP.getFreeHeap(),
              (unsigned)ESP.getMaxAllocHeap());
     return result;
   }
@@ -207,11 +207,8 @@ BookMetadata BookMetadataFetcher::fetch(const std::string& query, const std::str
     LOG_INF("BookMeta", "Search response too large (>%zu B) – truncated; trying to parse anyway", kMaxJsonBytes);
   }
 
-  // ── 2. Parse JSON – pull just what we need ──────────────────────────────
-  // {
-  //   "numFound": N,
-  //   "docs": [ { "title": "…", "author_name": ["…"], "cover_i": 12345 } ]
-  // }
+  // ── 2. Parse JSON ────────────────────────────────────────────────────────
+  // { "numFound": N, "docs": [ { "title": "…", "author_name": ["…"], "cover_i": 12345 } ] }
   JsonDocument filter;
   filter["numFound"] = true;
   filter["docs"][0]["title"] = true;
@@ -231,44 +228,53 @@ BookMetadata BookMetadataFetcher::fetch(const std::string& query, const std::str
   const JsonObject hit = doc["docs"][0];
   result.title = hit["title"] | "";
   result.author = hit["author_name"][0] | "";
-  const int coverId = hit["cover_i"] | 0;
+  result.coverId = hit["cover_i"] | 0;
 
-  LOG_INF("BookMeta", "Hit: '%s' by '%s' (cover_i=%d)", result.title.c_str(), result.author.c_str(), coverId);
+  LOG_INF("BookMeta", "Hit: '%s' by '%s' (cover_i=%d)", result.title.c_str(), result.author.c_str(), result.coverId);
 
   if (result.title.empty()) {
-    // OL returned a result but without a title – treat as no-match
     LOG_INF("BookMeta", "Result has empty title – discarding");
-    result = BookMetadata{};
-    return result;
+    result = BookSearchResult{};
   }
+  return result;
+}
 
-  // ── 3. Download and convert cover image ─────────────────────────────────
-  if (coverId > 0 && !cachePath.empty() && Storage.exists(cachePath.c_str())) {
-    // Match Epub::getCoverBmpPath() so the home cover grid picks it up.
-    const std::string destBmp = cachePath + "/cover_legacy_v2.bmp";
+bool BookMetadataFetcher::downloadCover(int coverId, const std::string& cachePath, std::string& outCoverBmpPath) {
+  outCoverBmpPath.clear();
+  if (coverId <= 0 || cachePath.empty() || !Storage.exists(cachePath.c_str())) return false;
 
-    const std::string coverUrl =
-        std::string(kCoverBase) + std::to_string(coverId) + "-L.jpg";
-    LOG_DBG("BookMeta", "Downloading cover: %s", coverUrl.c_str());
+  // Match Epub::getCoverBmpPath() so the home cover grid picks it up.
+  const std::string destBmp = cachePath + "/cover_legacy_v2.bmp";
+  const std::string coverUrl = std::string(kCoverBase) + std::to_string(coverId) + "-L.jpg";
+  LOG_DBG("BookMeta", "Downloading cover: %s", coverUrl.c_str());
 
-    Storage.remove(kCoverTmpJpg);
-    const auto dlResult = HttpDownloader::downloadToFile(coverUrl, kCoverTmpJpg);
-    if (dlResult == HttpDownloader::OK) {
-      Storage.remove(destBmp.c_str());  // replace any existing cover (embedded or prior OL)
-      if (Txt::convertCoverImageToBmp(kCoverTmpJpg, destBmp)) {
-        result.coverBmpPath = destBmp;
-        LOG_INF("BookMeta", "Cover saved: %s", destBmp.c_str());
-      } else {
-        LOG_INF("BookMeta", "Cover BMP conversion failed");
-      }
-      Storage.remove(kCoverTmpJpg);
+  Storage.remove(kCoverTmpJpg);
+  const auto dlResult = HttpDownloader::downloadToFile(coverUrl, kCoverTmpJpg);
+  if (dlResult == HttpDownloader::OK) {
+    Storage.remove(destBmp.c_str());  // replace any existing cover (embedded or prior OL)
+    if (Txt::convertCoverImageToBmp(kCoverTmpJpg, destBmp)) {
+      outCoverBmpPath = destBmp;
+      LOG_INF("BookMeta", "Cover saved: %s", destBmp.c_str());
     } else {
-      LOG_INF("BookMeta", "Cover download failed (err=%d)", dlResult);
-      // Fall back to any existing cover so the field is not left empty.
-      if (Storage.exists(destBmp.c_str())) result.coverBmpPath = destBmp;
+      LOG_INF("BookMeta", "Cover BMP conversion failed");
     }
+    Storage.remove(kCoverTmpJpg);
+  } else {
+    LOG_INF("BookMeta", "Cover download failed (err=%d)", dlResult);
+    // Fall back to any existing cover so the field is not left empty.
+    if (Storage.exists(destBmp.c_str())) outCoverBmpPath = destBmp;
   }
+  return !outCoverBmpPath.empty();
+}
 
+BookMetadata BookMetadataFetcher::fetch(const std::string& query, const std::string& cachePath) {
+  BookMetadata result;
+  const BookSearchResult sr = fetchSearchResult(query);
+  result.title = sr.title;
+  result.author = sr.author;
+  if (!sr.title.empty()) {
+    downloadCover(sr.coverId, cachePath, result.coverBmpPath);
+  }
   return result;
 }
 

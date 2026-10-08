@@ -22,11 +22,31 @@ struct BookMetadata {
 
 namespace BookMetadataFetcher {
 
+// Result of the JSON search step only — no cover download.
+struct BookSearchResult {
+  std::string title;   // empty on failure or no match
+  std::string author;  // empty if not in result
+  int coverId = 0;     // Open Library cover_i; 0 = no cover available
+};
+
 /**
- * Query Open Library for the best matching book given a title search string.
- * Downloads and converts the cover image to BMP at <cachePath>/cover_legacy_v2.bmp
- * (matching the path Epub::getCoverBmpPath() produces) so the home cover grid
- * picks it up without any extra plumbing.
+ * Phase 1: HTTP + JSON search only. Returns title/author/coverId without
+ * touching the filesystem. Caller can show a progress screen between phases.
+ */
+BookSearchResult fetchSearchResult(const std::string& query);
+
+/**
+ * Phase 2: Download and convert the Open Library cover image to BMP.
+ * @param coverId          Open Library cover_i from fetchSearchResult.
+ * @param cachePath        Book's cache directory; must already exist.
+ * @param outCoverBmpPath  Set to the saved BMP path on success.
+ * @return true if the cover was downloaded and converted successfully.
+ */
+bool downloadCover(int coverId, const std::string& cachePath, std::string& outCoverBmpPath);
+
+/**
+ * Convenience wrapper: calls fetchSearchResult() then downloadCover().
+ * Prefer the two-phase calls when a progress screen is needed between steps.
  *
  * @param query       Search terms — typically the user-typed filename stem.
  * @param cachePath   The book's CrossPoint cache directory (e.g. /.crosspoint/epub_<hash>).

@@ -66,6 +66,38 @@ void rollBackStatePath(const std::string& oldPath, const std::string& newPath, c
     LOG_ERR("FileBrowser", "Failed to roll back rename state: %s -> %s", newPath.c_str(), oldPath.c_str());
   }
 }
+
+// Full-screen metadata progress card.  titleVal/authorVal/coverVal are
+// the current status strings; nullptr renders as "…".
+static void drawMetadataProgressScreen(GfxRenderer& renderer,
+                                        const char* titleVal,
+                                        const char* authorVal,
+                                        const char* coverVal) {
+  renderer.clearScreen();
+  const int h = renderer.getScreenHeight();
+  const int lineH = renderer.getLineHeight(UI_12_FONT_ID);
+  const int margin = 40;
+
+  // Header centred ~1/4 down
+  renderer.drawCenteredText(UI_12_FONT_ID, h / 4 - lineH, tr(STR_FETCHING_METADATA), /*black=*/true, EpdFontFamily::BOLD);
+
+  // Three info rows below the header
+  const int baseY = h / 4 + lineH;
+  const int rowH = lineH + 14;
+
+  static char line[256];
+  snprintf(line, sizeof(line), "%s: %s", tr(STR_TITLE), titleVal ? titleVal : "\xe2\x80\xa6");
+  renderer.drawText(UI_12_FONT_ID, margin, baseY, line);
+
+  snprintf(line, sizeof(line), "%s: %s", tr(STR_AUTHOR), authorVal ? authorVal : "\xe2\x80\xa6");
+  renderer.drawText(UI_12_FONT_ID, margin, baseY + rowH, line);
+
+  snprintf(line, sizeof(line), "%s: %s", tr(STR_COVER), coverVal ? coverVal : "\xe2\x80\xa6");
+  renderer.drawText(UI_12_FONT_ID, margin, baseY + rowH * 2, line);
+
+  renderer.displayBuffer();
+}
+
 }  // namespace
 
 std::string getFileExtension(const std::string& filename);
@@ -646,42 +678,50 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
 
 void FileBrowserActivity::fetchMetadataViaWifi(const std::string& query, const std::string& cachePath,
                                                const std::string& bookPath) {
-  // Launch the native WiFi picker, which calls WIFI_STORE.loadFromFile() in its
-  // onEnter so saved credentials are visible.  Once connected, do a blocking
-  // Open Library lookup with user-visible progress popups.
+  // Launch the native WiFi picker (loads saved credentials in its onEnter).
+  // Once connected, do a two-phase blocking Open Library lookup with a
+  // full-screen progress display updated between phases.
+  auto wifiActivity = makeUniqueNoThrow<WifiSelectionActivity>(renderer, mappedInput);
+  if (!wifiActivity) {
+    LOG_ERR("FileBrowser", "OOM: WifiSelectionActivity");
+    BookMetadataFetcher::setMetadataPending(cachePath, query);
+    return;
+  }
   startActivityForResult(
-      std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
+      std::move(wifiActivity),
       [this, query, cachePath, bookPath](const ActivityResult& result) {
         if (result.isCancelled) {
           BookMetadataFetcher::setMetadataPending(cachePath, query);
           return;
         }
 
-        GUI.drawPopup(renderer, tr(STR_FETCHING_METADATA));
-        const BookMetadata meta = BookMetadataFetcher::fetch(query, cachePath);
+        // Phase 1: show "fetching" screen while the HTTP+JSON search runs.
+        drawMetadataProgressScreen(renderer, nullptr, nullptr, nullptr);
+        const BookMetadataFetcher::BookSearchResult sr = BookMetadataFetcher::fetchSearchResult(query);
 
-        if (meta.title.empty()) {
+        if (sr.title.empty()) {
           BookMetadataFetcher::setMetadataPending(cachePath, query);
           return;
         }
 
-        char msgBuf[128];
-        snprintf(msgBuf, sizeof(msgBuf), "%s: %s", tr(STR_METADATA_EMBEDDING_TITLE), meta.title.c_str());
-        GUI.drawPopup(renderer, msgBuf);
-        delay(900);
+        // Phase 2: title + author known; start cover download if available.
+        const char* titleVal = sr.title.c_str();
+        const char* authorVal = sr.author.empty() ? nullptr : sr.author.c_str();
+        const char* coverStatus = sr.coverId > 0 ? tr(STR_METADATA_COVER_DOWNLOADING) : tr(STR_METADATA_COVER_NONE);
+        drawMetadataProgressScreen(renderer, titleVal, authorVal, coverStatus);
 
-        if (!meta.author.empty()) {
-          snprintf(msgBuf, sizeof(msgBuf), "%s: %s", tr(STR_METADATA_EMBEDDING_AUTHOR), meta.author.c_str());
-          GUI.drawPopup(renderer, msgBuf);
-          delay(900);
+        std::string coverBmpPath;
+        if (sr.coverId > 0) {
+          BookMetadataFetcher::downloadCover(sr.coverId, cachePath, coverBmpPath);
+          coverStatus = coverBmpPath.empty() ? tr(STR_METADATA_COVER_NONE) : tr(STR_METADATA_COVER_SAVED);
         }
 
-        if (!meta.coverBmpPath.empty()) {
-          GUI.drawPopup(renderer, tr(STR_METADATA_EMBEDDING_COVER));
-          delay(900);
-        }
+        // Phase 3: final screen — all results known; hold briefly so the user
+        // can read the result before the file browser returns.
+        drawMetadataProgressScreen(renderer, titleVal, authorVal, coverStatus);
+        delay(1800);
 
-        RECENT_BOOKS.addBook(bookPath, meta.title, meta.author, meta.coverBmpPath);
+        RECENT_BOOKS.addBook(bookPath, sr.title, sr.author, coverBmpPath);
         BookMetadataFetcher::clearMetadataPending(cachePath);
       });
 }
