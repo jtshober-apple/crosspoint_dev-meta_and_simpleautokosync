@@ -41,6 +41,7 @@
 #include "ReaderToolbarUi.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
+#include "network/BookMetadataFetcher.h"
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
@@ -264,6 +265,26 @@ bool EpubReaderActivity::loadBook() {
 
   loadLinkStack();
   loadCachedBookmarks();
+
+  // If a previous rename-time metadata fetch failed, retry now that the book is
+  // open (WiFi acquired here lets the sleep handler piggyback for KoSync too).
+  const std::string cachePath = epub->getCachePath();
+  if (BookMetadataFetcher::hasMetadataPending(cachePath)) {
+    const std::string pendingQuery = BookMetadataFetcher::readPendingQuery(cachePath);
+    if (!pendingQuery.empty()) {
+      GUI.drawPopup(renderer, tr(STR_CONNECTING_SAVED_WIFI));
+      if (BookMetadataFetcher::ensureWifiConnected()) {
+        GUI.drawPopup(renderer, tr(STR_FETCHING_METADATA));
+        const BookMetadata meta = BookMetadataFetcher::fetch(pendingQuery, cachePath);
+        if (!meta.title.empty()) {
+          RECENT_BOOKS.addBook(bookPath, meta.title, meta.author, meta.coverBmpPath);
+          BookMetadataFetcher::clearMetadataPending(cachePath);
+          LOG_INF("ERS", "Pending metadata resolved for '%s'", pendingQuery.c_str());
+        }
+      }
+    }
+  }
+
   return true;
 }
 

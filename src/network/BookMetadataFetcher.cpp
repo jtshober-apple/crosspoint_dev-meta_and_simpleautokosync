@@ -84,27 +84,88 @@ static void fetchTaskFn(void* arg) {
 bool BookMetadataFetcher::ensureWifiConnected() {
   if (WiFi.status() == WL_CONNECTED) return true;
 
-  const auto cred = WIFI_STORE.findCredential(WIFI_STORE.getLastConnectedSsid());
-  if (!cred) {
-    LOG_DBG("BookMeta", "No saved WiFi credential – skipping online lookup");
+  const size_t count = WIFI_STORE.getCredentialCount();
+  if (count == 0) {
+    LOG_DBG("BookMeta", "No saved WiFi credentials");
     return false;
   }
 
-  LOG_DBG("BookMeta", "Joining %s for metadata lookup…", cred->ssid.c_str());
   WiFi.mode(WIFI_STA);
-  WiFi.begin(cred->ssid.c_str(), cred->password.c_str());
 
-  const unsigned long deadline = millis() + 10000;
-  while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
-    delay(100);
+  // Try the last-connected network first for speed, then fall through to all others.
+  const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
+  auto tryCredential = [](const WifiCredential& cred, unsigned long timeoutMs) -> bool {
+    LOG_DBG("BookMeta", "Trying WiFi: %s", cred.ssid.c_str());
+    WiFi.begin(cred.ssid.c_str(), cred.password.c_str());
+    const unsigned long deadline = millis() + timeoutMs;
+    while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
+      delay(100);
+    }
+    if (WiFi.status() == WL_CONNECTED) return true;
+    WiFi.disconnect();
+    delay(200);
+    return false;
+  };
+
+  if (!lastSsid.empty()) {
+    const auto cred = WIFI_STORE.findCredential(lastSsid);
+    if (cred && tryCredential(*cred, 10000)) {
+      LOG_INF("BookMeta", "WiFi connected: %s", cred->ssid.c_str());
+      return true;
+    }
   }
 
-  if (WiFi.status() == WL_CONNECTED) {
-    LOG_INF("BookMeta", "WiFi connected for metadata lookup");
-    return true;
+  for (size_t i = 0; i < count; ++i) {
+    const auto cred = WIFI_STORE.getCredentialAt(i);
+    if (!cred || cred->ssid == lastSsid) continue;
+    if (tryCredential(*cred, 8000)) {
+      WIFI_STORE.setLastConnectedSsid(cred->ssid);
+      LOG_INF("BookMeta", "WiFi connected: %s", cred->ssid.c_str());
+      return true;
+    }
   }
-  LOG_DBG("BookMeta", "WiFi join timed out – falling back to embedded metadata");
+
+  LOG_DBG("BookMeta", "All %zu WiFi credentials failed", count);
   return false;
+}
+
+static constexpr const char* kMetaPendingFile = "/meta_pending";
+
+void BookMetadataFetcher::setMetadataPending(const std::string& cachePath, const std::string& query) {
+  if (cachePath.empty()) return;
+  if (!Storage.exists(cachePath.c_str()) && !Storage.mkdir(cachePath.c_str())) {
+    LOG_ERR("BookMeta", "Cannot create cache dir for pending flag: %s", cachePath.c_str());
+    return;
+  }
+  const std::string flagPath = cachePath + kMetaPendingFile;
+  HalFile f;
+  if (Storage.openFileForWrite("BookMeta", flagPath.c_str(), f)) {
+    f.write(reinterpret_cast<const uint8_t*>(query.c_str()), query.size());
+  } else {
+    LOG_ERR("BookMeta", "Failed to write pending flag: %s", flagPath.c_str());
+  }
+}
+
+void BookMetadataFetcher::clearMetadataPending(const std::string& cachePath) {
+  if (cachePath.empty()) return;
+  Storage.remove((cachePath + kMetaPendingFile).c_str());
+}
+
+bool BookMetadataFetcher::hasMetadataPending(const std::string& cachePath) {
+  if (cachePath.empty()) return false;
+  return Storage.exists((cachePath + kMetaPendingFile).c_str());
+}
+
+std::string BookMetadataFetcher::readPendingQuery(const std::string& cachePath) {
+  if (cachePath.empty()) return "";
+  const std::string flagPath = cachePath + kMetaPendingFile;
+  HalFile f;
+  if (!Storage.openFileForRead("BookMeta", flagPath.c_str(), f)) return "";
+  char buf[256];
+  const int n = f.read(buf, sizeof(buf) - 1);
+  if (n <= 0) return "";
+  buf[n] = '\0';
+  return buf;
 }
 
 BookMetadata BookMetadataFetcher::fetch(const std::string& query, const std::string& cachePath) {

@@ -611,13 +611,13 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
   }
 
   // ── Metadata refresh ────────────────────────────────────────────────────
-  // Store the typed stem immediately; background task queries Open Library
-  // and promotes the entry with authoritative title/author/cover on success.
-  // Epub is intentionally not opened here: after a rename the cache path hash
-  // changes, so Epub() would re-parse the full zip on the UI thread.
+  // Register the typed stem immediately, then attempt a blocking online lookup
+  // with visible progress so the user sees what's being fetched.  If the
+  // lookup fails (no WiFi, no OL result) a pending-flag file is written so
+  // the next book-open can retry.
   if (FsHelpers::hasReflowableBookExtension(newPath)) {
     RECENT_BOOKS.addBook(newPath, stem, "", "");
-    BookMetadataFetcher::launchBackgroundFetch(stem, newCachePath, newPath);
+    fetchMetadataBlocking(stem, newCachePath, newPath);
   } else if (FsHelpers::hasXtcExtension(newPath)) {
     Xtc xtc(newPath, "/.crosspoint");
     if (xtc.load() && !xtc.getTitle().empty()) {
@@ -625,7 +625,7 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
     } else {
       RECENT_BOOKS.addBook(newPath, stem, "", "");
     }
-    BookMetadataFetcher::launchBackgroundFetch(stem, newCachePath, newPath);
+    fetchMetadataBlocking(stem, newCachePath, newPath);
   }
 
   {
@@ -635,6 +635,48 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
     nav.follow(listCount());
   }
   requestUpdate(true);
+}
+
+void FileBrowserActivity::fetchMetadataBlocking(const std::string& query, const std::string& cachePath,
+                                                const std::string& bookPath) {
+  // Step 1: Connect to WiFi (tries last-connected first, then all saved networks).
+  GUI.drawPopup(renderer, tr(STR_CONNECTING_SAVED_WIFI));
+  if (!BookMetadataFetcher::ensureWifiConnected()) {
+    BookMetadataFetcher::setMetadataPending(cachePath, query);
+    GUI.drawPopup(renderer, tr(STR_WIFI_CONN_FAILED));
+    delay(1500);
+    return;
+  }
+
+  // Step 2: Query Open Library (blocking HTTP).
+  GUI.drawPopup(renderer, tr(STR_FETCHING_METADATA));
+  const BookMetadata meta = BookMetadataFetcher::fetch(query, cachePath);
+
+  if (meta.title.empty()) {
+    // No result — leave the user-typed stem in RECENT_BOOKS and flag for retry.
+    BookMetadataFetcher::setMetadataPending(cachePath, query);
+    return;
+  }
+
+  // Step 3: Show each field being embedded (user-visible confirmation).
+  char msgBuf[128];
+  snprintf(msgBuf, sizeof(msgBuf), "%s: %s", tr(STR_METADATA_EMBEDDING_TITLE), meta.title.c_str());
+  GUI.drawPopup(renderer, msgBuf);
+  delay(900);
+
+  if (!meta.author.empty()) {
+    snprintf(msgBuf, sizeof(msgBuf), "%s: %s", tr(STR_METADATA_EMBEDDING_AUTHOR), meta.author.c_str());
+    GUI.drawPopup(renderer, msgBuf);
+    delay(900);
+  }
+
+  if (!meta.coverBmpPath.empty()) {
+    GUI.drawPopup(renderer, tr(STR_METADATA_EMBEDDING_COVER));
+    delay(900);
+  }
+
+  RECENT_BOOKS.addBook(bookPath, meta.title, meta.author, meta.coverBmpPath);
+  BookMetadataFetcher::clearMetadataPending(cachePath);
 }
 
 bool FileBrowserActivity::handleCustomInput() {

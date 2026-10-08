@@ -19,6 +19,10 @@ class FileBrowserActivity final : public UiListActivity {
   void startRename();
   void renameSelectedFile(const std::string& oldPath, const std::string& oldEntry, const std::string& newStem,
                           const std::string& extension);
+  // Blocking metadata fetch with step-by-step progress popups.
+  // On WiFi/fetch failure writes a pending flag so book-open can retry.
+  void fetchMetadataBlocking(const std::string& query, const std::string& cachePath,
+                             const std::string& bookPath);
   void deleteSelected();
 
   Mode mode = Mode::Books;

@@ -58,4 +58,17 @@ bool ensureWifiConnected();
 void launchBackgroundFetch(const std::string& query, const std::string& cachePath,
                            const std::string& bookPath);
 
+/**
+ * Pending-metadata flag: written when a blocking fetch fails (no WiFi / no OL result),
+ * cleared on success. The flag file stores the original search query so the retry
+ * can use the same terms on next book open.
+ *
+ * @param cachePath  The book's cache directory (/.crosspoint/epub_<hash>).
+ * @param query      The search query to retry (typically the user-typed stem).
+ */
+void setMetadataPending(const std::string& cachePath, const std::string& query);
+void clearMetadataPending(const std::string& cachePath);
+bool hasMetadataPending(const std::string& cachePath);
+std::string readPendingQuery(const std::string& cachePath);
+
 }  // namespace BookMetadataFetcher
