@@ -55,6 +55,17 @@ class EpubReaderActivity final : public ReaderActivity {
   unsigned long bookmarkMessageTime = 0UL;
   bool pendingReadFolderMove = false;
 
+  // ── Silent auto-sync (KoSync) ──────────────────────────────────────────────
+  // State machine: open-book attempt → FAILED_ON_OPEN or OK;
+  // 30-page retry (when state != FAILED_MID_READ) → OK or FAILED_MID_READ.
+  enum class AutoSyncState : uint8_t { NEVER_TRIED, FAILED_ON_OPEN, FAILED_MID_READ, OK };
+  AutoSyncState autoSyncState = AutoSyncState::NEVER_TRIED;
+  int pagesSinceLastAutoSync = 0;
+  bool autoSyncTriggeredOnOpen = false;  // guard: trigger open sync only once
+  bool pendingAutoSync = false;          // set when a sync should be kicked off
+  bool currentSyncIsInitial = false;     // true when the pending sync is the on-open attempt
+  void launchAutoSync();
+
   // Toolbar reader menu (SETTINGS.readerMenuStyle == READER_MENU_TOOLBAR): drawn
   // over the page instead of pushing the full-screen list menu. Select opens the
   // Toolbar; its tools open the Contents/Text/More bottom-sheet panels.

@@ -15,6 +15,7 @@
 #include <TrustedTime.h>
 #include <WiFi.h>
 #include <esp_system.h>
+#include <freertos/task.h>
 
 #include <algorithm>
 #include <functional>
@@ -45,6 +46,7 @@
 #include "network/BookMetadataFetcher.h"
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
+#include "util/SilentKoSyncPush.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/settings/TextSettingsActivity.h"
 #include "components/UITheme.h"
@@ -176,6 +178,35 @@ void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string&
 
 }  // namespace
 
+// ── Silent auto-sync globals ──────────────────────────────────────────────────
+// Accessed from both the FreeRTOS sync task and the main loop task.
+// Single-writer per variable: sync task writes s_kosyncResult and
+// s_kosyncRunning; main task reads them. volatile is sufficient here.
+static volatile bool s_kosyncRunning = false;
+static volatile uint8_t s_kosyncResult = 0;  // 0=none, 1=success, 2=failure
+
+namespace {
+struct AutoSyncArgs {
+  std::string bookPath;
+  std::string xpath;
+  float percentage;
+};
+
+static void autoSyncTaskFn(void* arg) {
+  auto* args = static_cast<AutoSyncArgs*>(arg);
+  bool ok = false;
+  if (BookMetadataFetcher::ensureWifiConnected()) {
+    ok = silentKoSyncUpload(args->bookPath, args->xpath, args->percentage);
+  } else {
+    LOG_DBG("KOSync", "Auto-sync: no WiFi");
+  }
+  s_kosyncResult = ok ? 1u : 2u;
+  s_kosyncRunning = false;
+  delete args;
+  vTaskDelete(nullptr);
+}
+}  // namespace
+
 EpubReaderActivity::~EpubReaderActivity() {
   ImageBlock::setExtractor(nullptr, nullptr);
   // ActivityManager destroys activities with its RenderLock already held;
@@ -195,6 +226,41 @@ EpubReaderActivity::~EpubReaderActivity() {
   } else {
     epub.reset();
   }
+}
+
+void EpubReaderActivity::launchAutoSync() {
+  if (s_kosyncRunning || !epub || !KOREADER_STORE.hasCredentials()) return;
+
+  const int currentPage = section ? section->currentPage : nextPageNumber;
+  const int totalPages = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;
+
+  // Save progress so the xpath we compute reflects the current position.
+  saveProgress(currentSpineIndex, currentPage, totalPages);
+
+  CrossPointPosition localPos = getCurrentPosition();
+  auto* args = new (std::nothrow) AutoSyncArgs{bookPath, "", 0.0f};
+  if (!args) {
+    LOG_ERR("KOSync", "Auto-sync OOM: AutoSyncArgs");
+    return;
+  }
+
+  {
+    GfxRenderer::FrameBufferLoan loan(renderer);
+    const SavedProgressPosition pos = ProgressMapper::toSavedProgress(epub, localPos);
+    args->xpath = pos.xpath;
+    args->percentage = pos.percentage;
+  }
+
+  s_kosyncResult = 0;
+  s_kosyncRunning = true;
+  if (xTaskCreate(autoSyncTaskFn, "KoSyncAuto", 8192, args, 1, nullptr) != pdPASS) {
+    LOG_ERR("KOSync", "Failed to create auto-sync task");
+    delete args;
+    s_kosyncRunning = false;
+  } else {
+    LOG_DBG("KOSync", "Auto-sync task launched (initial=%d)", currentSyncIsInitial ? 1 : 0);
+  }
+  pendingAutoSync = false;
 }
 
 bool EpubReaderActivity::loadBook() {
@@ -428,6 +494,48 @@ void EpubReaderActivity::loop() {
   }
 
   rememberBookOnceRendered();
+
+  // ── Silent auto-sync ────────────────────────────────────────────────────────
+  // Trigger the on-open sync once, after the first page has rendered.
+  if (!autoSyncTriggeredOnOpen && pageRendered.load(std::memory_order_acquire) && epub &&
+      KOREADER_STORE.hasCredentials() && !s_kosyncRunning) {
+    autoSyncTriggeredOnOpen = true;
+    currentSyncIsInitial = true;
+    pendingAutoSync = true;
+  }
+
+  // Execute pending sync (compute xpath under RenderLock, then spawn task).
+  if (pendingAutoSync && !s_kosyncRunning) {
+    RenderLock lock(RenderLock::Mode::Try);
+    if (lock.ownsLock()) {
+      launchAutoSync();
+    }
+  }
+
+  // Check for completed sync task result.
+  if (!s_kosyncRunning && s_kosyncResult != 0) {
+    const bool success = (s_kosyncResult == 1u);
+    s_kosyncResult = 0;
+
+    if (success) {
+      autoSyncState = AutoSyncState::OK;
+      pagesSinceLastAutoSync = 0;
+    } else if (currentSyncIsInitial) {
+      autoSyncState = AutoSyncState::FAILED_ON_OPEN;
+    } else {
+      autoSyncState = AutoSyncState::FAILED_MID_READ;
+    }
+    currentSyncIsInitial = false;
+
+    // Brief non-blocking toast: paint popup, wait, then trigger a normal page repaint.
+    {
+      RenderLock lock;
+      GUI.drawPopup(renderer, success ? tr(STR_SYNCED) : tr(STR_NOT_SYNCED));
+    }
+    delay(1500);
+    requestUpdate();
+  }
+  // ── End auto-sync ────────────────────────────────────────────────────────────
 
   // Someone else turned the screen while this reader was stacked (the control
   // center's orientation tile). Reflow before the next render, or the page
@@ -1164,6 +1272,15 @@ bool EpubReaderActivity::pageTurn(bool isForwardTurn) {
     if (section->currentPage < section->pageCount - 1 || section->isBuilding()) {
       section->currentPage++;
       lastPageTurnTime = millis();
+      // 30-page auto-sync check (forward turns only; don't fire while a sync is already running).
+      if (autoSyncState != AutoSyncState::FAILED_MID_READ && !pendingAutoSync && !s_kosyncRunning &&
+          KOREADER_STORE.hasCredentials()) {
+        if (++pagesSinceLastAutoSync >= 30) {
+          pagesSinceLastAutoSync = 0;
+          currentSyncIsInitial = false;
+          pendingAutoSync = true;
+        }
+      }
       return true;
     } else if (currentSpineIndex + 1 < epub->getSpineItemsCount()) {
       RenderLock lock;
@@ -2002,7 +2119,8 @@ void EpubReaderActivity::renderStatusBar() const {
   }
 
   GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset, true, currentPageBookmarked,
-                    section ? section->isBuilding() : false);
+                    section ? section->isBuilding() : false,
+                    autoSyncState == AutoSyncState::FAILED_MID_READ);
 }
 
 // ---------------------------------------------------------------------------

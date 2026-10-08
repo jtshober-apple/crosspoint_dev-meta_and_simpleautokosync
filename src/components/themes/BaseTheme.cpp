@@ -787,7 +787,8 @@ void BaseTheme::fillPopupProgress(const GfxRenderer& renderer, const Rect& layou
 
 void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, const int currentPage,
                               const int pageCount, std::string title, const int paddingBottom, const int textYOffset,
-                              const bool fillMargin, const bool isPageBookmarked, const bool pageCountEstimated) {
+                              const bool fillMargin, const bool isPageBookmarked, const bool pageCountEstimated,
+                              const bool showSyncFailIcon) {
   auto metrics = UITheme::getInstance().getMetrics();
   int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
   renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
@@ -887,6 +888,15 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
       }
       renderer.drawText(SMALL_FONT_ID, clockX, textY, timeBuf);
     }
+  }
+
+  // Draw sync-fail X icon (left of right cluster)
+  if (showSyncFailIcon) {
+    constexpr int kSyncIconGap = 8;
+    const int xIconWidth = renderer.getTextWidth(SMALL_FONT_ID, "X");
+    const int iconX = rightClusterX - rightClusterWidth - (rightClusterWidth > 0 ? kSyncIconGap : 0) - xIconWidth;
+    renderer.drawText(SMALL_FONT_ID, iconX, textY, "X");
+    rightClusterWidth += xIconWidth + (rightClusterWidth > 0 ? kSyncIconGap : 0);
   }
 
   // Draw Bookmark
