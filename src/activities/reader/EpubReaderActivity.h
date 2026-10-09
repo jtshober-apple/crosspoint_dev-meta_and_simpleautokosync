@@ -64,10 +64,16 @@ class EpubReaderActivity final : public ReaderActivity {
   bool autoSyncTriggeredOnOpen = false;  // guard: trigger open sync only once
   bool pendingAutoSync = false;          // set when a sync should be kicked off
   bool currentSyncIsInitial = false;     // true when the pending sync is the on-open attempt
-  bool syncArgsReady = false;            // params computed, network I/O pending
+  bool syncArgsReady = false;            // params computed, WiFi start pending
   std::string syncDocHash;               // document hash for pending sync
   std::string syncXpath;                 // xpath for pending sync
   float syncPct = 0.0f;                  // percentage for pending sync
+  // WiFi association polling: silentWifiBegin() was called; loop() polls
+  // WiFi.status() each tick rather than blocking the main task.
+  bool wifiConnecting = false;
+  unsigned long wifiConnectDeadline = 0;
+  bool wifiWeConnected = false;          // we started WiFi; we must disconnect after
+  static constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 20000;
   // Computes sync params (hash, xpath, percentage) under the caller's RenderLock.
   // Returns true when params are ready for the subsequent network phase.
   bool launchAutoSync();

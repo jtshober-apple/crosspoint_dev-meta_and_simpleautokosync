@@ -482,29 +482,59 @@ void EpubReaderActivity::loop() {
     }
   }
 
-  // Phase 2: WiFi connect + TLS push, no lock held. Runs synchronously on the
-  // main task so no FreeRTOS task stack eats into the heap before TLS needs it.
+  // Phase 2a: kick off WiFi in the background (non-blocking).
+  // The ESP32 WiFi stack associates on its own task; we poll each loop tick.
   if (syncArgsReady) {
     syncArgsReady = false;
-    bool ok = false;
-    bool weConnected = false;
-    if (WiFi.status() == WL_CONNECTED || silentWifiConnectFast(weConnected)) {
-      ok = silentKoSyncUpload(syncDocHash, syncXpath, syncPct);
+    if (WiFi.status() == WL_CONNECTED) {
+      // Already connected — go straight to sync this tick.
+      wifiConnecting = false;
+      const bool ok = silentKoSyncUpload(syncDocHash, syncXpath, syncPct);
+      if (ok) {
+        autoSyncState = AutoSyncState::OK;
+        pagesSinceLastAutoSync = 0;
+      } else if (currentSyncIsInitial) {
+        autoSyncState = AutoSyncState::FAILED_ON_OPEN;
+      } else {
+        autoSyncState = AutoSyncState::FAILED_MID_READ;
+      }
+      currentSyncIsInitial = false;
+      requestUpdate();
     } else {
-      LOG_DBG("KOSync", "Auto-sync: no WiFi");
+      silentWifiBegin();
+      wifiConnecting = true;
+      wifiWeConnected = true;
+      wifiConnectDeadline = millis() + WIFI_CONNECT_TIMEOUT_MS;
     }
-    if (weConnected) WiFi.disconnect();
+  }
 
-    if (ok) {
-      autoSyncState = AutoSyncState::OK;
-      pagesSinceLastAutoSync = 0;
-    } else if (currentSyncIsInitial) {
-      autoSyncState = AutoSyncState::FAILED_ON_OPEN;
-    } else {
-      autoSyncState = AutoSyncState::FAILED_MID_READ;
+  // Phase 2b: poll for WiFi association, then run TLS sync once connected.
+  // Runs each loop tick until connected or deadline passes — zero blocking.
+  if (wifiConnecting) {
+    if (WiFi.status() == WL_CONNECTED) {
+      wifiConnecting = false;
+      LOG_DBG("KOSync", "Auto-sync: WiFi up, syncing");
+      const bool ok = silentKoSyncUpload(syncDocHash, syncXpath, syncPct);
+      if (wifiWeConnected) { WiFi.disconnect(); wifiWeConnected = false; }
+      if (ok) {
+        autoSyncState = AutoSyncState::OK;
+        pagesSinceLastAutoSync = 0;
+      } else if (currentSyncIsInitial) {
+        autoSyncState = AutoSyncState::FAILED_ON_OPEN;
+      } else {
+        autoSyncState = AutoSyncState::FAILED_MID_READ;
+      }
+      currentSyncIsInitial = false;
+      requestUpdate();
+    } else if (millis() >= wifiConnectDeadline) {
+      wifiConnecting = false;
+      if (wifiWeConnected) { WiFi.disconnect(); wifiWeConnected = false; }
+      LOG_DBG("KOSync", "Auto-sync: WiFi timeout after %lums", WIFI_CONNECT_TIMEOUT_MS);
+      if (currentSyncIsInitial) autoSyncState = AutoSyncState::FAILED_ON_OPEN;
+      else autoSyncState = AutoSyncState::FAILED_MID_READ;
+      currentSyncIsInitial = false;
+      requestUpdate();
     }
-    currentSyncIsInitial = false;
-    requestUpdate();  // status bar repaints with v/x indicator
   }
   // ── End auto-sync ────────────────────────────────────────────────────────────
 
@@ -1259,7 +1289,7 @@ bool EpubReaderActivity::pageTurn(bool isForwardTurn) {
       lastPageTurnTime = millis();
       // 30-page auto-sync check (forward turns only; don't fire while a sync is already running).
       if (autoSyncState != AutoSyncState::FAILED_MID_READ && !pendingAutoSync && !syncArgsReady &&
-          KOREADER_STORE.hasCredentials()) {
+          !wifiConnecting && KOREADER_STORE.hasCredentials()) {
         if (++pagesSinceLastAutoSync >= 15) {
           pagesSinceLastAutoSync = 0;
           currentSyncIsInitial = false;

@@ -15,25 +15,12 @@ static bool waitForConnect(unsigned long timeoutMs) {
   return WiFi.status() == WL_CONNECTED;
 }
 
-bool silentWifiConnectFast(bool& weConnected) {
-  weConnected = false;
-
-  if (WiFi.status() == WL_CONNECTED) return true;
-
-  // Use the ESP32 NVS last-connected network — no credential store needed.
+void silentWifiBegin() {
+  // WiFi.begin() is non-blocking: the ESP32 WiFi stack associates in the
+  // background.  The caller polls WiFi.status() for WL_CONNECTED.
   WiFi.mode(WIFI_STA);
   WiFi.begin();  // reconnects using NVS-stored SSID + passphrase
-  LOG_DBG("WiFiConnect", "Fast: trying NVS last network (5s)");
-
-  if (waitForConnect(5000)) {
-    LOG_INF("WiFiConnect", "Fast: connected via NVS");
-    weConnected = true;
-    return true;
-  }
-
-  WiFi.disconnect();
-  LOG_DBG("WiFiConnect", "Fast: NVS connect failed");
-  return false;
+  LOG_DBG("WiFiConnect", "Begin (NVS last network, non-blocking)");
 }
 
 bool silentWifiConnectAggressive(bool& weConnected) {
@@ -41,12 +28,11 @@ bool silentWifiConnectAggressive(bool& weConnected) {
 
   if (WiFi.status() == WL_CONNECTED) return true;
 
-  // Try NVS last network first (fastest).
+  // NVS last network first.
   WiFi.mode(WIFI_STA);
   WiFi.begin();
-  LOG_DBG("WiFiConnect", "Aggressive: trying NVS last network (5s)");
-
-  if (waitForConnect(5000)) {
+  LOG_DBG("WiFiConnect", "Aggressive: NVS last network (8s)");
+  if (waitForConnect(8000)) {
     LOG_INF("WiFiConnect", "Aggressive: connected via NVS");
     weConnected = true;
     return true;
@@ -54,15 +40,13 @@ bool silentWifiConnectAggressive(bool& weConnected) {
   WiFi.disconnect();
   delay(200);
 
-  // Fall through to WIFI_STORE credentials — wider net for sleep sync.
+  // Fall through to WIFI_STORE credentials.
   const size_t count = WIFI_STORE.getCredentialCount();
   if (count == 0) {
     LOG_DBG("WiFiConnect", "Aggressive: no stored credentials");
     return false;
   }
 
-  // Try last-connected SSID from the store first (may differ from NVS if the
-  // user connected via the SSID picker rather than ESP32 native join).
   const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
   auto tryCredential = [](const WifiCredential& cred, unsigned long timeoutMs) -> bool {
     LOG_DBG("WiFiConnect", "Trying: %s", cred.ssid.c_str());
