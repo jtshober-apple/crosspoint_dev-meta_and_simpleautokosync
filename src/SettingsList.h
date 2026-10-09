@@ -190,10 +190,13 @@ inline std::vector<StrId> buildLongPressMenuValues() {
 }
 
 inline std::vector<StrId> homeThemeValues() {
+  // Each entry's position must match its UI_THEME enum value so the persisted
+  // numeric setting maps back to the correct theme. Cover Grid (4) falls back
+  // to Lyra on devices without PSRAM; Carousel (5) is always available.
   static constexpr StrId VALUES[] = {StrId::STR_THEME_CLASSIC, StrId::STR_THEME_LYRA, StrId::STR_THEME_LYRA_EXTENDED,
-                                     StrId::STR_THEME_ROUNDEDRAFF, StrId::STR_THEME_COVER_GRID};
-  const size_t count = UITheme::supportsCoverGrid() ? std::size(VALUES) : std::size(VALUES) - 1;
-  return {VALUES, VALUES + count};
+                                     StrId::STR_THEME_ROUNDEDRAFF, StrId::STR_THEME_COVER_GRID,
+                                     StrId::STR_THEME_CAROUSEL};
+  return {VALUES, VALUES + std::size(VALUES)};
 }
 
 // Shared settings list used by both the device settings UI and the web settings API.

@@ -16,6 +16,7 @@
 #include "components/themes/BaseTheme.h"
 #include "components/themes/lyra/Lyra3CoversTheme.h"
 #include "components/themes/lyra/LyraTheme.h"
+#include "components/themes/carousel/CarouselTheme.h"
 #include "components/themes/roundedraff/RoundedRaffTheme.h"
 
 UITheme UITheme::instance;
@@ -68,6 +69,17 @@ void UITheme::setTheme(CrossPointSettings::UI_THEME type) {
       currentTheme = std::make_unique<Lyra3CoversTheme>();
       currentMetrics = &Lyra3CoversMetrics::values;
       break;
+    case CrossPointSettings::UI_THEME::CAROUSEL: {
+      auto theme = makeUniqueNoThrow<CarouselTheme>();
+      if (!theme) {
+        LOG_ERR("UI", "OOM: Carousel theme");
+        return;
+      }
+      currentTheme = std::move(theme);
+      currentMetrics = &CarouselMetrics::values;
+      LOG_DBG("UI", "Using Carousel theme");
+      break;
+    }
   }
   metricsValid = false;
 }
