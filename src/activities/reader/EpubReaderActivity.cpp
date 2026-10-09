@@ -26,6 +26,7 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "DictionaryWordSelectActivity.h"
+#include "util/DictionaryRegistry.h"
 #include "EpubReaderBookmarksActivity.h"
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderFootnoteSelectActivity.h"
@@ -396,10 +397,20 @@ void EpubReaderActivity::showBuildPopup(GfxRenderer& renderer, int& pagesUntilFu
 
 void EpubReaderActivity::openDictionaryWordSelect() {
   if (SETTINGS.dictionaryName[0] == '\0') {
-    showDictionaryMessage = true;
-    dictionaryMessageTime = millis();
-    requestUpdate();
-    return;
+    // Auto-select when exactly one dictionary is installed — makes a single
+    // SD-card dictionary feel built-in without requiring a settings visit.
+    std::vector<DictionaryEntry> found;
+    DictionaryRegistry::discover(found);
+    if (found.size() == 1) {
+      strncpy(SETTINGS.dictionaryName, found[0].name.c_str(), sizeof(SETTINGS.dictionaryName) - 1);
+      SETTINGS.dictionaryName[sizeof(SETTINGS.dictionaryName) - 1] = '\0';
+      SETTINGS.saveToFile();
+    } else {
+      showDictionaryMessage = true;
+      dictionaryMessageTime = millis();
+      requestUpdate();
+      return;
+    }
   }
   if (!section) return;
   auto page = section->loadPage(section->currentPage);
