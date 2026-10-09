@@ -890,10 +890,10 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     }
   }
 
-  // Draw sync status icon (left of right cluster): "v" = ok, "x" = fail
+  // Draw sync status icon (left of right cluster): "+" = ok, "-" = fail
   if (syncIconState != 0) {
     constexpr int kSyncIconGap = 4;
-    const char* glyph = (syncIconState == 1) ? "v" : "x";
+    const char* glyph = (syncIconState == 1) ? "+" : "-";
     const int iconWidth = renderer.getTextWidth(SMALL_FONT_ID, glyph);
     const int gap = rightClusterWidth > 0 ? kSyncIconGap : 0;
     const int iconX = rightClusterX - rightClusterWidth - gap - iconWidth;
