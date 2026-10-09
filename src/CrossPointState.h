@@ -34,6 +34,11 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   // (so SleepActivity and any background logic never needs to re-read the EPUB from SD).
   std::string kosyncPendingDocHash;
   bool showBootScreen = true;
+  // Transient (not serialized): set by KOReaderSyncActivity on a successful
+  // manual upload so the next EpubReaderActivity skips the on-open auto-sync
+  // and shows OK instead of immediately attempting (and likely failing) a
+  // redundant re-sync right after the user just synced manually.
+  bool kosyncJustSynced = false;
 
   static const char* getFilePath() { return "/.crosspoint/state.json"; }
   void toJson(JsonDocument& doc) const;

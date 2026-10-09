@@ -469,8 +469,17 @@ void EpubReaderActivity::loop() {
   if (!autoSyncTriggeredOnOpen && pageRendered.load(std::memory_order_acquire) && epub &&
       KOREADER_STORE.hasCredentials()) {
     autoSyncTriggeredOnOpen = true;
-    currentSyncIsInitial = true;
-    pendingAutoSync = true;
+    // A successful manual KOReader sync (KOReaderSyncActivity) sets this flag
+    // before handing back to us via replaceActivity. Skip the redundant
+    // on-open auto-sync and show OK directly.
+    if (APP_STATE.kosyncJustSynced) {
+      APP_STATE.kosyncJustSynced = false;
+      autoSyncState = AutoSyncState::OK;
+      requestUpdate();
+    } else {
+      currentSyncIsInitial = true;
+      pendingAutoSync = true;
+    }
   }
 
   // Phase 1: compute xpath + hash under RenderLock (FrameBufferLoan needs it).

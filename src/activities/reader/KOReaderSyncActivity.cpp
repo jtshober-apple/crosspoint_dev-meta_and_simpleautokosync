@@ -390,7 +390,9 @@ void KOReaderSyncActivity::performUpload() {
   }
 
   // The upload succeeded: clear the sleep-pending flag so the X indicator no
-  // longer appears on the next sleep screen.
+  // longer appears on the next sleep screen; also signal the incoming
+  // EpubReaderActivity to skip its on-open auto-sync and show OK immediately.
+  APP_STATE.kosyncJustSynced = true;
   if (APP_STATE.kosyncUploadPending) {
     APP_STATE.kosyncUploadPending = false;
     APP_STATE.kosyncPendingXpath.clear();
