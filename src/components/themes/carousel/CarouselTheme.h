@@ -10,8 +10,10 @@ constexpr ThemeMetrics values = [] {
   // Three-slot carousel: center cover fills most of the screen width;
   // flanking covers are drawn at reduced scale and partially clipped.
   v.homeRecentBooksCount = 3;
-  v.homeCoverHeight = 360;
-  v.homeCoverTileHeight = 380;
+  // Center cover: image slot height; flankers scale proportionally.
+  // Tile height includes spacing + title (2 lines) + author line below the image.
+  v.homeCoverHeight = 300;
+  v.homeCoverTileHeight = 390;
   return v;
 }();
 }  // namespace CarouselMetrics

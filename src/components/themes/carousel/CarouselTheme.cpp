@@ -23,9 +23,9 @@ constexpr int FLANK_SCALE_PERCENT = 65;
 constexpr int FLANK_VISIBLE_PERCENT = 45;
 // Gap between center cover and the flanking covers.
 constexpr int COVER_GAP = 10;
-// Inner padding around each cover border.
+// Selection border thickness (px) drawn around the active center cover.
 constexpr int COVER_BORDER = 2;
-// Corner radius for the selection highlight.
+// Corner radius for the selection border.
 constexpr int SELECTION_RADIUS = 8;
 // Vertical drop of flanking covers relative to the center cover.
 constexpr int FLANK_VERTICAL_OFFSET_PERCENT = 5;
@@ -61,7 +61,7 @@ static void drawOneCover(GfxRenderer& renderer, Rect slot, Rect clipSlot, const 
       } else {
         hasCover = false;
       }
-      file.close();
+      // No explicit file.close() — DESTRUCTOR_CLOSES_FILE=1 handles it.
     } else {
       hasCover = false;
     }
@@ -116,7 +116,7 @@ void CarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
   const int rightClipRight = std::min(rect.x + rect.width, rightFlankX + flankVisible);
 
   if (!coverRendered) {
-    // --- Draw left flanker (book[2] if available, else book[0]) ---
+    // --- Draw left flanker ---
     if (recentBooks.size() >= 2) {
       const Rect leftSlot{leftFlankX, flankY, flankW, flankH};
       const Rect leftClip{leftClipX, flankY, leftFlankRightEdge - leftClipX, flankH};
@@ -125,7 +125,7 @@ void CarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
       }
     }
 
-    // --- Draw right flanker (book[1] if available) ---
+    // --- Draw right flanker ---
     if (recentBooks.size() >= 3) {
       const Rect rightSlot{rightFlankX, flankY, flankW, flankH};
       const Rect rightClip{rightClipX, flankY, rightClipRight - rightClipX, flankH};
@@ -144,16 +144,12 @@ void CarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
     coverRendered = coverBufferStored;
   }
 
-  // --- Selection highlight on center cover ---
-  const bool centerSelected = (selectorIndex == 0);
-  if (centerSelected) {
-    renderer.fillRoundedRect(centerX - COVER_BORDER, centerY - COVER_BORDER, centerW + 2 * COVER_BORDER,
-                             centerH + 2 * COVER_BORDER, SELECTION_RADIUS, true, true, true, true, Color::LightGray);
-    // Re-draw the center cover image over the highlight
-    {
-      const Rect centerSlot{centerX, centerY, centerW, centerH};
-      drawOneCover(renderer, centerSlot, centerSlot, recentBooks[0], thumbH);
-    }
+  // --- Selection highlight: thin rounded border around center cover ---
+  // Drawn as an outline only — no fill — so the cover image stays intact.
+  if (selectorIndex == 0) {
+    renderer.drawRoundedRect(centerX - COVER_BORDER, centerY - COVER_BORDER,
+                             centerW + 2 * COVER_BORDER, centerH + 2 * COVER_BORDER,
+                             COVER_BORDER, SELECTION_RADIUS, true, true, true, true, true);
   }
 
   // --- Title and author below center cover ---
@@ -177,5 +173,4 @@ void CarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
       renderer.drawText(UI_10_FONT_ID, textX + (textW - aw) / 2, y, author.c_str(), true);
     }
   }
-
 }
