@@ -475,6 +475,7 @@ void EpubReaderActivity::loop() {
     if (APP_STATE.kosyncJustSynced) {
       APP_STATE.kosyncJustSynced = false;
       autoSyncState = AutoSyncState::OK;
+      syncIconPagesRemaining = 5;
       requestUpdate();
     } else {
       currentSyncIsInitial = true;
@@ -501,11 +502,14 @@ void EpubReaderActivity::loop() {
       const bool ok = silentKoSyncUpload(syncDocHash, syncXpath, syncPct);
       if (ok) {
         autoSyncState = AutoSyncState::OK;
+        syncIconPagesRemaining = 5;
         pagesSinceLastAutoSync = 0;
       } else if (currentSyncIsInitial) {
         autoSyncState = AutoSyncState::FAILED_ON_OPEN;
+        syncIconPagesRemaining = 5;
       } else {
         autoSyncState = AutoSyncState::FAILED_MID_READ;
+        syncIconPagesRemaining = 5;
       }
       currentSyncIsInitial = false;
       requestUpdate();
@@ -527,11 +531,14 @@ void EpubReaderActivity::loop() {
       if (wifiWeConnected) { WiFi.disconnect(); wifiWeConnected = false; }
       if (ok) {
         autoSyncState = AutoSyncState::OK;
+        syncIconPagesRemaining = 5;
         pagesSinceLastAutoSync = 0;
       } else if (currentSyncIsInitial) {
         autoSyncState = AutoSyncState::FAILED_ON_OPEN;
+        syncIconPagesRemaining = 5;
       } else {
         autoSyncState = AutoSyncState::FAILED_MID_READ;
+        syncIconPagesRemaining = 5;
       }
       currentSyncIsInitial = false;
       requestUpdate();
@@ -539,8 +546,8 @@ void EpubReaderActivity::loop() {
       wifiConnecting = false;
       if (wifiWeConnected) { WiFi.disconnect(); wifiWeConnected = false; }
       LOG_DBG("KOSync", "Auto-sync: WiFi timeout after %lums", WIFI_CONNECT_TIMEOUT_MS);
-      if (currentSyncIsInitial) autoSyncState = AutoSyncState::FAILED_ON_OPEN;
-      else autoSyncState = AutoSyncState::FAILED_MID_READ;
+      if (currentSyncIsInitial) { autoSyncState = AutoSyncState::FAILED_ON_OPEN; syncIconPagesRemaining = 5; }
+      else { autoSyncState = AutoSyncState::FAILED_MID_READ; syncIconPagesRemaining = 5; }
       currentSyncIsInitial = false;
       requestUpdate();
     }
@@ -1296,14 +1303,9 @@ bool EpubReaderActivity::pageTurn(bool isForwardTurn) {
     if (section->currentPage < section->pageCount - 1 || section->isBuilding()) {
       section->currentPage++;
       lastPageTurnTime = millis();
-      // 30-page auto-sync check (forward turns only; don't fire while a sync is already running).
-      if (autoSyncState != AutoSyncState::FAILED_MID_READ && !pendingAutoSync && !syncArgsReady &&
-          !wifiConnecting && KOREADER_STORE.hasCredentials()) {
-        if (++pagesSinceLastAutoSync >= 15) {
-          pagesSinceLastAutoSync = 0;
-          currentSyncIsInitial = false;
-          pendingAutoSync = true;
-        }
+      if (syncIconPagesRemaining > 0 && --syncIconPagesRemaining == 0) {
+        autoSyncState = AutoSyncState::NEVER_TRIED;
+        requestUpdate();
       }
       return true;
     } else if (currentSpineIndex + 1 < epub->getSpineItemsCount()) {
@@ -1322,6 +1324,10 @@ bool EpubReaderActivity::pageTurn(bool isForwardTurn) {
     if (section->currentPage > 0) {
       section->currentPage--;
       lastPageTurnTime = millis();
+      if (syncIconPagesRemaining > 0 && --syncIconPagesRemaining == 0) {
+        autoSyncState = AutoSyncState::NEVER_TRIED;
+        requestUpdate();
+      }
       return true;
     } else if (currentSpineIndex > 0) {
       RenderLock lock;
@@ -1330,6 +1336,10 @@ bool EpubReaderActivity::pageTurn(bool isForwardTurn) {
       currentSpineIndex--;
       section.reset();
       lastPageTurnTime = millis();
+      if (syncIconPagesRemaining > 0 && --syncIconPagesRemaining == 0) {
+        autoSyncState = AutoSyncState::NEVER_TRIED;
+        requestUpdate();
+      }
       return true;
     }
   }

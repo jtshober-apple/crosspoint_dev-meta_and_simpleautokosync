@@ -532,16 +532,27 @@ void SleepActivity::onEnter() {
   // prepareForSleep() on the main task so we never re-read the EPUB file here.
   // Sleep proceeds regardless of the sync result.
   if (APP_STATE.kosyncUploadPending && !APP_STATE.kosyncPendingDocHash.empty()) {
-    // Show a loading popup so the user can see that a sync is in progress,
-    // even when WiFi is already connected (in which case no WiFi-join popup
-    // is drawn by deliverSleepPluginEvents in main.cpp).
-    GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+    // Staged sync UI: show what is actually happening at each step rather than
+    // a generic "Loading" popup. WiFi connect can take several seconds; the
+    // upload is a separate step. Brief result feedback before the sleep screen.
     bool weConnected = false;
-    if (WiFi.status() == WL_CONNECTED || silentWifiConnectAggressive(weConnected)) {
-      silentKoSyncUpload(APP_STATE.kosyncPendingDocHash,
-                         APP_STATE.kosyncPendingXpath,
-                         APP_STATE.kosyncPendingPct);
+    const bool alreadyConnected = (WiFi.status() == WL_CONNECTED);
+    if (!alreadyConnected) {
+      GUI.drawPopup(renderer, tr(STR_CONNECTING));
+    }
+    const bool wifiOk = alreadyConnected || silentWifiConnectAggressive(weConnected);
+    if (wifiOk) {
+      GUI.drawPopup(renderer, tr(STR_KOSYNC_SYNCING));
+      const bool ok = silentKoSyncUpload(APP_STATE.kosyncPendingDocHash,
+                                         APP_STATE.kosyncPendingXpath,
+                                         APP_STATE.kosyncPendingPct);
+      if (ok) {
+        GUI.drawPopup(renderer, tr(STR_SYNCED));
+        delay(700);
+      }
     } else {
+      GUI.drawPopup(renderer, tr(STR_CONNECTION_FAILED));
+      delay(600);
       LOG_DBG("KOSync", "Sleep-sync: no WiFi available");
     }
     if (weConnected) WiFi.disconnect();

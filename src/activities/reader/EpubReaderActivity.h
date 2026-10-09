@@ -61,6 +61,9 @@ class EpubReaderActivity final : public ReaderActivity {
   enum class AutoSyncState : uint8_t { NEVER_TRIED, FAILED_ON_OPEN, FAILED_MID_READ, OK };
   AutoSyncState autoSyncState = AutoSyncState::NEVER_TRIED;
   int pagesSinceLastAutoSync = 0;
+  // Page turns remaining before the sync status icon clears from the status bar.
+  // Set to a small count when a sync result arrives; counts down on each turn.
+  int syncIconPagesRemaining = 0;
   bool autoSyncTriggeredOnOpen = false;  // guard: trigger open sync only once
   bool pendingAutoSync = false;          // set when a sync should be kicked off
   bool currentSyncIsInitial = false;     // true when the pending sync is the on-open attempt
