@@ -621,11 +621,24 @@ void SleepActivity::renderSleepScreenContent() const {
 }
 
 void SleepActivity::doSleepKoSync() {
-  // Guard: only when sleeping from a book with pending upload data.
-  if (!APP_STATE.lastSleepFromReader || !APP_STATE.kosyncUploadPending ||
-      APP_STATE.kosyncPendingDocHash.empty()) {
+  if (!APP_STATE.lastSleepFromReader || APP_STATE.kosyncPendingDocHash.empty()) return;
+
+  // If a manual sync just succeeded, show a brief confirmation rather than
+  // re-syncing. kosyncJustSynced persists through prepareForSleep() when the
+  // on-open consumer is blocked by autoSyncTriggeredOnOpen.
+  if (!APP_STATE.kosyncUploadPending && APP_STATE.kosyncJustSynced) {
+    const int screenW = renderer.getScreenWidth();
+    const int screenH = renderer.getScreenHeight();
+    renderer.clearScreen();
+    renderer.drawCenteredText(UI_12_FONT_ID, screenH / 4, tr(STR_KOSYNC_SLEEP_HEADER), true, EpdFontFamily::BOLD);
+    const int y = screenH / 4 + renderer.getLineHeight(UI_12_FONT_ID) + 4 + screenH / 12;
+    renderer.drawText(SMALL_FONT_ID, screenW / 8, y, tr(STR_ALREADY_SYNCED));
+    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    delay(1500);
     return;
   }
+
+  if (!APP_STATE.kosyncUploadPending) return;
 
   const int screenW = renderer.getScreenWidth();
   const int screenH = renderer.getScreenHeight();

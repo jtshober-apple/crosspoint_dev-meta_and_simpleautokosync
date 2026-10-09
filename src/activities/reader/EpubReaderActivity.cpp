@@ -1226,6 +1226,13 @@ void EpubReaderActivity::prepareForSleep() {
 
       if (docHash.empty()) {
         LOG_ERR("KOSync", "Sleep-sync: could not compute document hash; upload skipped");
+      } else if (APP_STATE.kosyncJustSynced) {
+        // A manual sync completed but kosyncJustSynced wasn't consumed (the
+        // on-open consumer is gated on !autoSyncTriggeredOnOpen, which is
+        // always true on return from KOReaderSyncActivity). Position is already
+        // on the server — don't re-arm the pending upload.
+        APP_STATE.kosyncPendingDocHash = docHash;  // preserve for "already synced" display
+        LOG_DBG("KOSync", "Sleep-sync: skipping re-arm — manual sync just completed");
       } else {
         APP_STATE.kosyncUploadPending = true;
         APP_STATE.kosyncPendingXpath = localKoPos.xpath;
