@@ -355,6 +355,25 @@ void HomeActivity::loop() {
     requestUpdate();
     return;
   }
+  if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::CAROUSEL) {
+    const int bookCount = static_cast<int>(recentBooks.size());
+    if (bookCount > 1 && selectorIndex < bookCount) {
+      if (swipe == MappedInputManager::SwipeDir::Left) {
+        selectorIndex = (selectorIndex + 1) % bookCount;
+        coverRendered = false;
+        coverBufferStored = false;
+        requestUpdate();
+        return;
+      }
+      if (swipe == MappedInputManager::SwipeDir::Right) {
+        selectorIndex = (selectorIndex + bookCount - 1) % bookCount;
+        coverRendered = false;
+        coverBufferStored = false;
+        requestUpdate();
+        return;
+      }
+    }
+  }
 
   // Back is otherwise unused on the home menu: open the most recently read
   // book directly (recentBooks is most-recent-first and already pruned of
