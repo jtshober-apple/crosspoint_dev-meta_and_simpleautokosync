@@ -26,6 +26,7 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "activities/reader/ReaderUtils.h"
+#include "network/BookMetadataFetcher.h"
 #include "util/SilentKoSyncPush.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -524,10 +525,15 @@ void releaseSdFontCachesForDecode(const GfxRenderer& renderer) {
 void SleepActivity::onEnter() {
   Activity::onEnter();
 
-  // Attempt a silent KoSync upload while WiFi is still up (plugin events may
-  // have connected it just before goToSleep was called).
-  if (APP_STATE.kosyncUploadPending && WiFi.status() == WL_CONNECTED) {
-    silentKoSyncUpload(APP_STATE.openEpubPath, APP_STATE.kosyncPendingXpath, APP_STATE.kosyncPendingPct);
+  // Attempt a silent KoSync upload on sleep. Connect to the last-used WiFi
+  // network if not already connected, then push progress before the screen
+  // goes dark. This is fire-and-forget — sleep proceeds regardless of result.
+  if (APP_STATE.kosyncUploadPending) {
+    if (WiFi.status() == WL_CONNECTED || BookMetadataFetcher::ensureWifiConnected()) {
+      silentKoSyncUpload(APP_STATE.openEpubPath, APP_STATE.kosyncPendingXpath, APP_STATE.kosyncPendingPct);
+    } else {
+      LOG_DBG("KOSync", "Sleep-sync: no WiFi available");
+    }
   }
 
   const bool renderQuickResume =
