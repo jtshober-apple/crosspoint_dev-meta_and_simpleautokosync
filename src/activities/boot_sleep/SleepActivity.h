@@ -27,9 +27,12 @@ class SleepActivity final : public Activity {
   // Dispatches to the appropriate renderXxxSleepScreen() helper based on
   // settings and context (inverted frame, reader origin, etc.).
   void renderSleepScreenContent() const;
-  // Draws the "sync pending" X indicator as a partial overlay after the main
-  // sleep screen has already been committed to the display.
+  // Draws the sync result indicator as a partial overlay after the main sleep
+  // screen has already been committed to the display.
+  // drawSyncPendingIndicator: minus sign — upload still pending or failed.
+  // drawSyncSuccessIndicator: plus sign — upload completed this sleep.
   void drawSyncPendingIndicator() const;
+  void drawSyncSuccessIndicator() const;
   // Full-screen verbose KoSync upload shown when sleeping from inside a book.
   // Draws per-network connection attempts and final result, then returns so the
   // normal sleep screen can render.  No-op when not sleeping from a book or

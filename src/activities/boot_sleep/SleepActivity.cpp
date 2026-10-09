@@ -527,34 +527,44 @@ void releaseSdFontCachesForDecode(const GfxRenderer& renderer) {
 void SleepActivity::onEnter() {
   Activity::onEnter();
 
+  // Snapshot the pending-upload state before sync so we can detect success.
+  const bool hadPendingSync = APP_STATE.kosyncUploadPending && APP_STATE.lastSleepFromReader;
+
   // Full-screen verbose KoSync sync before the sleep screen.  Only fires when
   // sleeping from inside a book; home-screen sleeps skip this entirely.
   doSleepKoSync();
+
+  // After sync: pending still set → failed; was set and now cleared → succeeded.
+  const bool syncFailed = APP_STATE.kosyncUploadPending && APP_STATE.lastSleepFromReader;
+  // Cover mode shows nothing on success (book art is the focus); all other
+  // modes show a plus to confirm the upload went through.
+  const bool isCoverMode =
+      SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::COVER ||
+      (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM &&
+       APP_STATE.lastSleepFromReader);
+  const bool syncSucceeded = hadPendingSync && !syncFailed;
 
   const bool renderQuickResume =
       SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
       (fromTimeout &&
        SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
 
-  // Show the X indicator only when the device slept out of a book with a
-  // pending upload that didn't make it through (WiFi down, upload failed, etc.).
-  // Do NOT show it for sleeps from the home screen or other non-reader views:
-  // the pending flag may carry over from a prior session, and the X would be
-  // misleading on an unrelated sleep screen.
-  const bool showSyncPending = APP_STATE.kosyncUploadPending && APP_STATE.lastSleepFromReader;
-
   if (renderQuickResume) {
     renderLastScreenSleepScreen();
-    if (showSyncPending) {
+    if (syncFailed) {
       drawSyncPendingIndicator();
+    } else if (syncSucceeded && !isCoverMode) {
+      drawSyncSuccessIndicator();
     }
     return;
   }
 
   renderSleepScreenContent();
 
-  if (showSyncPending) {
+  if (syncFailed) {
     drawSyncPendingIndicator();
+  } else if (syncSucceeded && !isCoverMode) {
+    drawSyncSuccessIndicator();
   }
 }
 
@@ -645,15 +655,11 @@ void SleepActivity::doSleepKoSync() {
     snprintf(buf, sizeof(buf), "%s %s", tr(STR_KOSYNC_CONNECTED_TO), WiFi.SSID().c_str());
     addLine(buf);
   } else {
-    // Settle the WiFi stack before probing — a prior activity may have just disconnected.
+    // Restart the WiFi stack — KOReaderSyncActivity calls esp_wifi_stop() before
+    // returning, which fully kills the radio.  WiFi.mode(WIFI_STA) restarts it
+    // via esp_wifi_start() internally.
     WiFi.mode(WIFI_STA);
     delay(300);
-    // WiFi.SSID() returns the NVS-configured network name even while disconnected,
-    // giving us an SSID to display and to look up in WIFI_STORE.
-    const std::string nvsHint(WiFi.SSID().c_str());
-
-    const size_t count = WIFI_STORE.getCredentialCount();
-    const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
 
     // Try one WIFI_STORE credential, showing its SSID on screen while connecting.
     auto tryNetwork = [&](const WifiCredential& cred) -> bool {
@@ -669,53 +675,52 @@ void SleepActivity::doSleepKoSync() {
       return false;
     };
 
-    // Priority 1: WIFI_STORE explicit creds for the NVS-configured SSID.
-    // Using explicit creds avoids the no-arg WiFi.begin() race that can silently
-    // fail when the stack settled from a recent disconnect.
-    if (!nvsHint.empty()) {
-      const auto cred = WIFI_STORE.findCredential(nvsHint);
-      if (cred) {
+    // Priority 1: NVS no-arg connect — device was on this network moments ago.
+    // Call begin() FIRST; WiFi.SSID() only returns the NVS network name after
+    // begin() has been called (esp_wifi_stop() clears it from the driver state).
+    WiFi.begin();
+    delay(100);
+    {
+      char buf[80];
+      const std::string nvsHint(WiFi.SSID().c_str());
+      if (!nvsHint.empty()) {
+        snprintf(buf, sizeof(buf), "%s %s...", tr(STR_KOSYNC_CONNECTING_TO), nvsHint.c_str());
+      } else {
+        snprintf(buf, sizeof(buf), "%s", tr(STR_CONNECTING));
+      }
+      addLine(buf);
+    }
+    const unsigned long nvsDl = millis() + 8000;
+    while (WiFi.status() != WL_CONNECTED && millis() < nvsDl) delay(100);
+    if (WiFi.status() == WL_CONNECTED) {
+      wifiOk = true;
+      weConnected = true;
+    } else {
+      WiFi.disconnect();
+      delay(200);
+
+      const size_t count = WIFI_STORE.getCredentialCount();
+      const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
+
+      // Priority 2: WIFI_STORE last-connected.
+      if (!lastSsid.empty()) {
+        const auto cred = WIFI_STORE.findCredential(lastSsid);
+        if (cred && tryNetwork(*cred)) {
+          WIFI_STORE.setLastConnectedSsid(cred->ssid);
+          wifiOk = true;
+          weConnected = true;
+        }
+      }
+
+      // Priority 3: sweep remaining stored credentials.
+      for (size_t i = 0; i < count && !wifiOk; ++i) {
+        const auto cred = WIFI_STORE.getCredentialAt(i);
+        if (!cred || cred->ssid == lastSsid) continue;
         if (tryNetwork(*cred)) {
           WIFI_STORE.setLastConnectedSsid(cred->ssid);
           wifiOk = true;
           weConnected = true;
         }
-      } else {
-        // NVS SSID known but no WIFI_STORE entry — fall back to NVS no-arg connect.
-        char buf[80];
-        snprintf(buf, sizeof(buf), "%s %s...", tr(STR_KOSYNC_CONNECTING_TO), nvsHint.c_str());
-        addLine(buf);
-        WiFi.begin();
-        const unsigned long nvsDl = millis() + 8000;
-        while (WiFi.status() != WL_CONNECTED && millis() < nvsDl) delay(100);
-        if (WiFi.status() == WL_CONNECTED) {
-          wifiOk = true;
-          weConnected = true;
-        } else {
-          WiFi.disconnect();
-          delay(200);
-        }
-      }
-    }
-
-    // Priority 2: WIFI_STORE last-connected (when different from the NVS hint).
-    if (!wifiOk && !lastSsid.empty() && lastSsid != nvsHint) {
-      const auto cred = WIFI_STORE.findCredential(lastSsid);
-      if (cred && tryNetwork(*cred)) {
-        WIFI_STORE.setLastConnectedSsid(cred->ssid);
-        wifiOk = true;
-        weConnected = true;
-      }
-    }
-
-    // Priority 3: sweep remaining stored credentials.
-    for (size_t i = 0; i < count && !wifiOk; ++i) {
-      const auto cred = WIFI_STORE.getCredentialAt(i);
-      if (!cred || cred->ssid == nvsHint || cred->ssid == lastSsid) continue;
-      if (tryNetwork(*cred)) {
-        WIFI_STORE.setLastConnectedSsid(cred->ssid);
-        wifiOk = true;
-        weConnected = true;
       }
     }
 
@@ -743,24 +748,42 @@ void SleepActivity::doSleepKoSync() {
 }
 
 void SleepActivity::drawSyncPendingIndicator() const {
-  // Draw a bold X in the top-right corner to indicate that a KoSync upload
-  // is still pending (device slept from a book before sync completed).
+  // Draw a bold minus (−) in the top-right corner: upload still pending or failed.
   // The sleep screen was already committed, so this is an additional partial
   // refresh on top of it.
   constexpr int MARGIN = 12;
-  constexpr int SIZE = 28;     // X spans SIZE x SIZE pixels
-  constexpr int LINE_W = 4;    // stroke width
+  constexpr int SIZE = 28;
+  constexpr int LINE_W = 4;
+
+  const int w = renderer.getScreenWidth();
+  const int x0 = w - MARGIN - SIZE;
+  const int y0 = MARGIN;
+  const int x1 = x0 + SIZE;
+  const int yMid = y0 + SIZE / 2;
+
+  renderer.fillRect(x0 - 2, y0 - 2, SIZE + 4, SIZE + 4, false);
+  // Horizontal bar (minus)
+  renderer.drawLine(x0, yMid, x1, yMid, LINE_W, true);
+  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+}
+
+void SleepActivity::drawSyncSuccessIndicator() const {
+  // Draw a bold plus (+) in the top-right corner: upload completed this sleep.
+  constexpr int MARGIN = 12;
+  constexpr int SIZE = 28;
+  constexpr int LINE_W = 4;
 
   const int w = renderer.getScreenWidth();
   const int x0 = w - MARGIN - SIZE;
   const int y0 = MARGIN;
   const int x1 = x0 + SIZE;
   const int y1 = y0 + SIZE;
+  const int xMid = x0 + SIZE / 2;
+  const int yMid = y0 + SIZE / 2;
 
-  // Fill a white background square so the X reads clearly on any image.
   renderer.fillRect(x0 - 2, y0 - 2, SIZE + 4, SIZE + 4, false);
-  renderer.drawLine(x0, y0, x1, y1, LINE_W, true);
-  renderer.drawLine(x1, y0, x0, y1, LINE_W, true);
+  renderer.drawLine(x0, yMid, x1, yMid, LINE_W, true);   // horizontal
+  renderer.drawLine(xMid, y0, xMid, y1, LINE_W, true);   // vertical
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }
 
