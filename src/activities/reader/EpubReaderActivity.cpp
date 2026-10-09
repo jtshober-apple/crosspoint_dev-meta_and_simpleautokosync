@@ -48,6 +48,7 @@
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
 #include "util/SilentKoSyncPush.h"
+#include "util/SilentWifiConnect.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/settings/TextSettingsActivity.h"
 #include "components/UITheme.h"
@@ -486,11 +487,13 @@ void EpubReaderActivity::loop() {
   if (syncArgsReady) {
     syncArgsReady = false;
     bool ok = false;
-    if (BookMetadataFetcher::ensureWifiConnected()) {
+    bool weConnected = false;
+    if (WiFi.status() == WL_CONNECTED || silentWifiConnectFast(weConnected)) {
       ok = silentKoSyncUpload(syncDocHash, syncXpath, syncPct);
     } else {
       LOG_DBG("KOSync", "Auto-sync: no WiFi");
     }
+    if (weConnected) WiFi.disconnect();
 
     if (ok) {
       autoSyncState = AutoSyncState::OK;

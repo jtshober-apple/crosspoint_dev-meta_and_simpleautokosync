@@ -28,6 +28,7 @@
 #include "activities/reader/ReaderUtils.h"
 #include "network/BookMetadataFetcher.h"
 #include "util/SilentKoSyncPush.h"
+#include "util/SilentWifiConnect.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "images/Logo120.h"
@@ -535,13 +536,15 @@ void SleepActivity::onEnter() {
     // even when WiFi is already connected (in which case no WiFi-join popup
     // is drawn by deliverSleepPluginEvents in main.cpp).
     GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-    if (WiFi.status() == WL_CONNECTED || BookMetadataFetcher::ensureWifiConnected()) {
+    bool weConnected = false;
+    if (WiFi.status() == WL_CONNECTED || silentWifiConnectAggressive(weConnected)) {
       silentKoSyncUpload(APP_STATE.kosyncPendingDocHash,
                          APP_STATE.kosyncPendingXpath,
                          APP_STATE.kosyncPendingPct);
     } else {
       LOG_DBG("KOSync", "Sleep-sync: no WiFi available");
     }
+    if (weConnected) WiFi.disconnect();
   }
 
   const bool renderQuickResume =
