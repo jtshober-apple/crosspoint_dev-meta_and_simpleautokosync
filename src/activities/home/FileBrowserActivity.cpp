@@ -733,17 +733,26 @@ void FileBrowserActivity::fetchMetadataViaWifi(const std::string& query, const s
         const char* titleVal = sr.title.c_str();
         const char* authorVal = sr.author.empty() ? nullptr : sr.author.c_str();
 
-        // If the book's own cover is already extracted in the cache, use it immediately
-        // and skip the Open Library cover fetch entirely.
-        std::string coverBmpPath = BookMetadataFetcher::getCachedCoverBmpPath(cachePath);
-        const bool hasEmbedded = !coverBmpPath.empty();
-        const bool canFetchOl = !hasEmbedded && (sr.coverId > 0 || !sr.coverEditionKey.empty());
+        // OL fetch takes priority when OL cover data is available — even when a
+        // cover BMP already exists in the cache, since that file may be from a
+        // previous OL fetch rather than the book's own embedded cover.  Delete the
+        // stale file first so downloadCover() doesn't short-circuit on it.
+        std::string cachedCoverPath = BookMetadataFetcher::getCachedCoverBmpPath(cachePath);
+        const bool canFetchOl = sr.coverId > 0 || !sr.coverEditionKey.empty();
+        if (canFetchOl && !cachedCoverPath.empty()) {
+          Storage.remove(cachedCoverPath.c_str());
+          cachedCoverPath.clear();
+        }
+        // hasEmbedded is only true when no OL data exists but a cover file is
+        // present — meaning it came from the book's own embedded image.
+        const bool hasEmbedded = !canFetchOl && !cachedCoverPath.empty();
 
         const char* coverStatus = hasEmbedded  ? tr(STR_METADATA_COVER_EMBEDDED)
                                   : canFetchOl ? tr(STR_METADATA_COVER_DOWNLOADING)
                                                : tr(STR_METADATA_COVER_NONE);
         drawMetadataProgressScreen(renderer, titleVal, authorVal, coverStatus);
 
+        std::string coverBmpPath = cachedCoverPath;
         if (canFetchOl) {
           BookMetadataFetcher::downloadCover(sr.coverId, sr.coverEditionKey, cachePath, coverBmpPath);
           coverStatus = coverBmpPath.empty() ? tr(STR_METADATA_COVER_NONE) : tr(STR_METADATA_COVER_SAVED);
