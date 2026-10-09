@@ -525,12 +525,20 @@ void releaseSdFontCachesForDecode(const GfxRenderer& renderer) {
 void SleepActivity::onEnter() {
   Activity::onEnter();
 
-  // Attempt a silent KoSync upload on sleep. Connect to the last-used WiFi
+  // Attempt a silent KoSync upload on sleep.  Connect to the last-used WiFi
   // network if not already connected, then push progress before the screen
-  // goes dark. This is fire-and-forget — sleep proceeds regardless of result.
-  if (APP_STATE.kosyncUploadPending) {
+  // goes dark.  The document hash was pre-computed by EpubReaderActivity::
+  // prepareForSleep() on the main task so we never re-read the EPUB file here.
+  // Sleep proceeds regardless of the sync result.
+  if (APP_STATE.kosyncUploadPending && !APP_STATE.kosyncPendingDocHash.empty()) {
+    // Show a loading popup so the user can see that a sync is in progress,
+    // even when WiFi is already connected (in which case no WiFi-join popup
+    // is drawn by deliverSleepPluginEvents in main.cpp).
+    GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
     if (WiFi.status() == WL_CONNECTED || BookMetadataFetcher::ensureWifiConnected()) {
-      silentKoSyncUpload(APP_STATE.openEpubPath, APP_STATE.kosyncPendingXpath, APP_STATE.kosyncPendingPct);
+      silentKoSyncUpload(APP_STATE.kosyncPendingDocHash,
+                         APP_STATE.kosyncPendingXpath,
+                         APP_STATE.kosyncPendingPct);
     } else {
       LOG_DBG("KOSync", "Sleep-sync: no WiFi available");
     }

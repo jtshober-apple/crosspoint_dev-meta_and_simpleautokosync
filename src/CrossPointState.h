@@ -30,6 +30,9 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   // Valid only while kosyncUploadPending is true.
   std::string kosyncPendingXpath;
   float kosyncPendingPct = 0.0f;
+  // MD5 document hash for the KoReader sync server, pre-computed on the main task
+  // (so SleepActivity and any background logic never needs to re-read the EPUB from SD).
+  std::string kosyncPendingDocHash;
   bool showBootScreen = true;
 
   static const char* getFilePath() { return "/.crosspoint/state.json"; }

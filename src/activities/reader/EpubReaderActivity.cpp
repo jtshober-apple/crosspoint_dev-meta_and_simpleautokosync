@@ -32,6 +32,8 @@
 #include "EpubReaderFootnoteSelectActivity.h"
 #include "EpubReaderPercentSelectionActivity.h"
 #include "EpubReaderUtils.h"
+#include <KOReaderDocumentId.h>
+
 #include "KOReaderCredentialStore.h"
 #include "KOReaderSyncActivity.h"
 #include "MappedInputManager.h"
@@ -187,7 +189,7 @@ static volatile uint8_t s_kosyncResult = 0;  // 0=none, 1=success, 2=failure
 
 namespace {
 struct AutoSyncArgs {
-  std::string bookPath;
+  std::string documentHash;  // pre-computed on main task to avoid SD-card contention
   std::string xpath;
   float percentage;
 };
@@ -196,7 +198,7 @@ static void autoSyncTaskFn(void* arg) {
   auto* args = static_cast<AutoSyncArgs*>(arg);
   bool ok = false;
   if (BookMetadataFetcher::ensureWifiConnected()) {
-    ok = silentKoSyncUpload(args->bookPath, args->xpath, args->percentage);
+    ok = silentKoSyncUpload(args->documentHash, args->xpath, args->percentage);
   } else {
     LOG_DBG("KOSync", "Auto-sync: no WiFi");
   }
@@ -237,8 +239,23 @@ void EpubReaderActivity::launchAutoSync() {
   // Save progress so the xpath we compute reflects the current position.
   saveProgress(currentSpineIndex, currentPage, totalPages);
 
+  // Pre-compute the document hash on the main task here, before spawning the
+  // background FreeRTOS task.  KOReaderDocumentId::calculate() reads the EPUB
+  // file from the SD card; doing it from the sync task races with the main task's
+  // own EPUB reads and causes immediate hash-computation failures that produce
+  // instant "Not Synced" toasts.
+  const DocumentMatchMethod method = KOREADER_STORE.getMatchMethod();
+  const std::string documentHash = (method == DocumentMatchMethod::FILENAME)
+                                       ? KOReaderDocumentId::calculateFromFilename(bookPath)
+                                       : KOReaderDocumentId::calculate(bookPath);
+  if (documentHash.empty()) {
+    LOG_ERR("KOSync", "Auto-sync: could not compute document hash for '%s'", bookPath.c_str());
+    pendingAutoSync = false;
+    return;
+  }
+
   CrossPointPosition localPos = getCurrentPosition();
-  auto* args = new (std::nothrow) AutoSyncArgs{bookPath, "", 0.0f};
+  auto* args = new (std::nothrow) AutoSyncArgs{documentHash, "", 0.0f};
   if (!args) {
     LOG_ERR("KOSync", "Auto-sync OOM: AutoSyncArgs");
     return;
@@ -258,7 +275,8 @@ void EpubReaderActivity::launchAutoSync() {
     delete args;
     s_kosyncRunning = false;
   } else {
-    LOG_DBG("KOSync", "Auto-sync task launched (initial=%d)", currentSyncIsInitial ? 1 : 0);
+    LOG_DBG("KOSync", "Auto-sync task launched (initial=%d, hash=%s)", currentSyncIsInitial ? 1 : 0,
+            documentHash.c_str());
   }
   pendingAutoSync = false;
 }
@@ -1199,10 +1217,20 @@ void EpubReaderActivity::prepareForSleep() {
       // launchKOReaderSync(), but epub stays open (we are not navigating away).
       GfxRenderer::FrameBufferLoan loan(renderer);
       const SavedProgressPosition localKoPos = ProgressMapper::toSavedProgress(epub, localPos);
+
+      // Pre-compute the document hash now (main task, epub still open) so SleepActivity
+      // never needs to re-read the EPUB from SD card.
+      const DocumentMatchMethod method = KOREADER_STORE.getMatchMethod();
+      const std::string docHash = (method == DocumentMatchMethod::FILENAME)
+                                      ? KOReaderDocumentId::calculateFromFilename(bookPath)
+                                      : KOReaderDocumentId::calculate(bookPath);
+
       APP_STATE.kosyncUploadPending = true;
       APP_STATE.kosyncPendingXpath = localKoPos.xpath;
       APP_STATE.kosyncPendingPct = localKoPos.percentage;
-      LOG_DBG("KOSync", "Sleep-sync queued: xpath=%s pct=%.3f", localKoPos.xpath.c_str(), localKoPos.percentage);
+      APP_STATE.kosyncPendingDocHash = docHash;
+      LOG_DBG("KOSync", "Sleep-sync queued: xpath=%s pct=%.3f hash=%s",
+              localKoPos.xpath.c_str(), localKoPos.percentage, docHash.empty() ? "(empty)" : docHash.c_str());
     } else {
       LOG_ERR("KOSync", "Sleep-sync: could not save progress; upload skipped");
     }

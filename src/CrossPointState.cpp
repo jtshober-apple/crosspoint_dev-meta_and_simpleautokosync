@@ -56,6 +56,7 @@ void CrossPointState::toJson(JsonDocument& doc) const {
   if (kosyncUploadPending) {
     doc["kosyncPendingXpath"] = kosyncPendingXpath;
     doc["kosyncPendingPct"] = kosyncPendingPct;
+    doc["kosyncPendingDocHash"] = kosyncPendingDocHash;
   }
   doc["showBootScreen"] = showBootScreen;
 }
@@ -97,9 +98,11 @@ bool CrossPointState::fromJson(JsonVariantConst doc) {
   kosyncUploadPending = doc["kosyncUploadPending"] | false;
   kosyncPendingXpath = doc["kosyncPendingXpath"] | "";
   kosyncPendingPct = doc["kosyncPendingPct"] | 0.0f;
+  kosyncPendingDocHash = doc["kosyncPendingDocHash"] | "";
   if (!kosyncUploadPending) {
     kosyncPendingXpath.clear();
     kosyncPendingPct = 0.0f;
+    kosyncPendingDocHash.clear();
   }
   showBootScreen = doc["showBootScreen"] | true;
   return true;

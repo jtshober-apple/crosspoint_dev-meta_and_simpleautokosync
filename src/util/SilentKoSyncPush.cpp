@@ -1,8 +1,6 @@
 #include "SilentKoSyncPush.h"
 
 #include <Arduino.h>
-#include <KOReaderCredentialStore.h>
-#include <KOReaderDocumentId.h>
 #include <KOReaderSyncClient.h>
 #include <Logging.h>
 
@@ -45,22 +43,19 @@ static SyncAttemptResult trySync(const std::string& documentHash, const std::str
   return SyncAttemptResult::TRANSIENT_FAILURE;
 }
 
-bool silentKoSyncUpload(const std::string& bookPath, const std::string& xpath, float percentage) {
-  const DocumentMatchMethod method = KOREADER_STORE.getMatchMethod();
-  const std::string documentHash = (method == DocumentMatchMethod::FILENAME)
-                                       ? KOReaderDocumentId::calculateFromFilename(bookPath)
-                                       : KOReaderDocumentId::calculate(bookPath);
+bool silentKoSyncUpload(const std::string& documentHash, const std::string& xpath, float percentage) {
   if (documentHash.empty()) {
-    LOG_ERR("KOSync", "Auto-sync: could not compute document hash for %s", bookPath.c_str());
+    LOG_ERR("KOSync", "Auto-sync: empty document hash — skipping upload");
     return false;
   }
 
   auto result = trySync(documentHash, xpath, percentage);
   if (result == SyncAttemptResult::OK) {
-    LOG_INF("KOSync", "Auto-sync succeeded for %s", bookPath.c_str());
+    LOG_INF("KOSync", "Auto-sync succeeded (hash=%s)", documentHash.c_str());
     APP_STATE.kosyncUploadPending = false;
     APP_STATE.kosyncPendingXpath.clear();
     APP_STATE.kosyncPendingPct = 0.0f;
+    APP_STATE.kosyncPendingDocHash.clear();
     APP_STATE.saveToFile();
     return true;
   }
@@ -75,14 +70,15 @@ bool silentKoSyncUpload(const std::string& bookPath, const std::string& xpath, f
 
   result = trySync(documentHash, xpath, percentage);
   if (result == SyncAttemptResult::OK) {
-    LOG_INF("KOSync", "Auto-sync succeeded (retry) for %s", bookPath.c_str());
+    LOG_INF("KOSync", "Auto-sync succeeded (retry, hash=%s)", documentHash.c_str());
     APP_STATE.kosyncUploadPending = false;
     APP_STATE.kosyncPendingXpath.clear();
     APP_STATE.kosyncPendingPct = 0.0f;
+    APP_STATE.kosyncPendingDocHash.clear();
     APP_STATE.saveToFile();
     return true;
   }
 
-  LOG_ERR("KOSync", "Auto-sync failed after retry for %s", bookPath.c_str());
+  LOG_ERR("KOSync", "Auto-sync failed after retry (hash=%s)", documentHash.c_str());
   return false;
 }
