@@ -788,7 +788,7 @@ void BaseTheme::fillPopupProgress(const GfxRenderer& renderer, const Rect& layou
 void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, const int currentPage,
                               const int pageCount, std::string title, const int paddingBottom, const int textYOffset,
                               const bool fillMargin, const bool isPageBookmarked, const bool pageCountEstimated,
-                              const bool showSyncFailIcon) {
+                              const uint8_t syncIconState) {
   auto metrics = UITheme::getInstance().getMetrics();
   int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
   renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
@@ -890,20 +890,15 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     }
   }
 
-  // Draw sync-fail boxed-X icon (left of right cluster)
-  if (showSyncFailIcon) {
+  // Draw sync status icon (left of right cluster): "v" = ok, "x" = fail
+  if (syncIconState != 0) {
     constexpr int kSyncIconGap = 4;
-    constexpr int kSyncBoxPad = 2;  // inner padding around the "X" glyph
-    const int xIconWidth = renderer.getTextWidth(SMALL_FONT_ID, "X");
-    const int glyphH = renderer.getTextHeight(SMALL_FONT_ID);
-    const int boxW = xIconWidth + kSyncBoxPad * 2;
-    const int boxH = glyphH + kSyncBoxPad * 2;
+    const char* glyph = (syncIconState == 1) ? "v" : "x";
+    const int iconWidth = renderer.getTextWidth(SMALL_FONT_ID, glyph);
     const int gap = rightClusterWidth > 0 ? kSyncIconGap : 0;
-    const int boxX = rightClusterX - rightClusterWidth - gap - boxW;
-    const int boxY = textY - glyphH - kSyncBoxPad + 1;
-    renderer.drawRect(boxX, boxY, boxW, boxH);
-    renderer.drawText(SMALL_FONT_ID, boxX + kSyncBoxPad, textY, "X");
-    rightClusterWidth += boxW + gap;
+    const int iconX = rightClusterX - rightClusterWidth - gap - iconWidth;
+    renderer.drawText(SMALL_FONT_ID, iconX, textY, glyph);
+    rightClusterWidth += iconWidth + gap;
   }
 
   // Draw Bookmark

@@ -501,14 +501,7 @@ void EpubReaderActivity::loop() {
       autoSyncState = AutoSyncState::FAILED_MID_READ;
     }
     currentSyncIsInitial = false;
-
-    // Brief non-blocking toast: paint popup, wait, then trigger a normal page repaint.
-    {
-      RenderLock lock;
-      GUI.drawPopup(renderer, ok ? tr(STR_SYNCED) : tr(STR_NOT_SYNCED));
-    }
-    delay(1500);
-    requestUpdate();
+    requestUpdate();  // status bar repaints with v/x indicator
   }
   // ── End auto-sync ────────────────────────────────────────────────────────────
 
@@ -2107,9 +2100,12 @@ void EpubReaderActivity::renderStatusBar() const {
     title = epub ? epub->getTitle() : "";
   }
 
+  uint8_t syncIconState = 0;
+  if (autoSyncState == AutoSyncState::OK) syncIconState = 1;
+  else if (autoSyncState == AutoSyncState::FAILED_ON_OPEN || autoSyncState == AutoSyncState::FAILED_MID_READ) syncIconState = 2;
+
   GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset, true, currentPageBookmarked,
-                    section ? section->isBuilding() : false,
-                    autoSyncState == AutoSyncState::FAILED_MID_READ);
+                    section ? section->isBuilding() : false, syncIconState);
 }
 
 // ---------------------------------------------------------------------------
