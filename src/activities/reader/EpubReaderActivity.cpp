@@ -15,7 +15,6 @@
 #include <TrustedTime.h>
 #include <WiFi.h>
 #include <esp_system.h>
-#include <freertos/task.h>
 
 #include <algorithm>
 #include <functional>
@@ -180,35 +179,6 @@ void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string&
 
 }  // namespace
 
-// ── Silent auto-sync globals ──────────────────────────────────────────────────
-// Accessed from both the FreeRTOS sync task and the main loop task.
-// Single-writer per variable: sync task writes s_kosyncResult and
-// s_kosyncRunning; main task reads them. volatile is sufficient here.
-static volatile bool s_kosyncRunning = false;
-static volatile uint8_t s_kosyncResult = 0;  // 0=none, 1=success, 2=failure
-
-namespace {
-struct AutoSyncArgs {
-  std::string documentHash;  // pre-computed on main task to avoid SD-card contention
-  std::string xpath;
-  float percentage;
-};
-
-static void autoSyncTaskFn(void* arg) {
-  auto* args = static_cast<AutoSyncArgs*>(arg);
-  bool ok = false;
-  if (BookMetadataFetcher::ensureWifiConnected()) {
-    ok = silentKoSyncUpload(args->documentHash, args->xpath, args->percentage);
-  } else {
-    LOG_DBG("KOSync", "Auto-sync: no WiFi");
-  }
-  s_kosyncResult = ok ? 1u : 2u;
-  s_kosyncRunning = false;
-  delete args;
-  vTaskDelete(nullptr);
-}
-}  // namespace
-
 EpubReaderActivity::~EpubReaderActivity() {
   ImageBlock::setExtractor(nullptr, nullptr);
   // ActivityManager destroys activities with its RenderLock already held;
@@ -230,55 +200,35 @@ EpubReaderActivity::~EpubReaderActivity() {
   }
 }
 
-void EpubReaderActivity::launchAutoSync() {
-  if (s_kosyncRunning || !epub || !KOREADER_STORE.hasCredentials()) return;
+bool EpubReaderActivity::launchAutoSync() {
+  // Phase 1: compute sync params under the caller's RenderLock.
+  // No FreeRTOS task is spawned; the network I/O runs on the main task in loop()
+  // after this returns, without any lock held. This keeps the 8 KB contiguous task
+  // stack off the heap so KOReaderSyncClient's TLS handshake can find its 20 KB block.
+  if (!epub || !KOREADER_STORE.hasCredentials()) return false;
 
   const int currentPage = section ? section->currentPage : nextPageNumber;
   const int totalPages = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;
-
-  // Save progress so the xpath we compute reflects the current position.
   saveProgress(currentSpineIndex, currentPage, totalPages);
 
-  // Pre-compute the document hash on the main task here, before spawning the
-  // background FreeRTOS task.  KOReaderDocumentId::calculate() reads the EPUB
-  // file from the SD card; doing it from the sync task races with the main task's
-  // own EPUB reads and causes immediate hash-computation failures that produce
-  // instant "Not Synced" toasts.
   const DocumentMatchMethod method = KOREADER_STORE.getMatchMethod();
-  const std::string documentHash = (method == DocumentMatchMethod::FILENAME)
-                                       ? KOReaderDocumentId::calculateFromFilename(bookPath)
-                                       : KOReaderDocumentId::calculate(bookPath);
-  if (documentHash.empty()) {
+  syncDocHash = (method == DocumentMatchMethod::FILENAME)
+                    ? KOReaderDocumentId::calculateFromFilename(bookPath)
+                    : KOReaderDocumentId::calculate(bookPath);
+  if (syncDocHash.empty()) {
     LOG_ERR("KOSync", "Auto-sync: could not compute document hash for '%s'", bookPath.c_str());
-    pendingAutoSync = false;
-    return;
+    return false;
   }
 
   CrossPointPosition localPos = getCurrentPosition();
-  auto* args = new (std::nothrow) AutoSyncArgs{documentHash, "", 0.0f};
-  if (!args) {
-    LOG_ERR("KOSync", "Auto-sync OOM: AutoSyncArgs");
-    return;
-  }
+  GfxRenderer::FrameBufferLoan loan(renderer);
+  const SavedProgressPosition pos = ProgressMapper::toSavedProgress(epub, localPos);
+  syncXpath = pos.xpath;
+  syncPct = pos.percentage;
 
-  {
-    GfxRenderer::FrameBufferLoan loan(renderer);
-    const SavedProgressPosition pos = ProgressMapper::toSavedProgress(epub, localPos);
-    args->xpath = pos.xpath;
-    args->percentage = pos.percentage;
-  }
-
-  s_kosyncResult = 0;
-  s_kosyncRunning = true;
-  if (xTaskCreate(autoSyncTaskFn, "KoSyncAuto", 8192, args, 1, nullptr) != pdPASS) {
-    LOG_ERR("KOSync", "Failed to create auto-sync task");
-    delete args;
-    s_kosyncRunning = false;
-  } else {
-    LOG_DBG("KOSync", "Auto-sync task launched (initial=%d, hash=%s)", currentSyncIsInitial ? 1 : 0,
-            documentHash.c_str());
-  }
-  pendingAutoSync = false;
+  LOG_DBG("KOSync", "Auto-sync params ready (initial=%d hash=%s)", currentSyncIsInitial ? 1 : 0,
+          syncDocHash.c_str());
+  return true;
 }
 
 bool EpubReaderActivity::loadBook() {
@@ -516,26 +466,33 @@ void EpubReaderActivity::loop() {
   // ── Silent auto-sync ────────────────────────────────────────────────────────
   // Trigger the on-open sync once, after the first page has rendered.
   if (!autoSyncTriggeredOnOpen && pageRendered.load(std::memory_order_acquire) && epub &&
-      KOREADER_STORE.hasCredentials() && !s_kosyncRunning) {
+      KOREADER_STORE.hasCredentials()) {
     autoSyncTriggeredOnOpen = true;
     currentSyncIsInitial = true;
     pendingAutoSync = true;
   }
 
-  // Execute pending sync (compute xpath under RenderLock, then spawn task).
-  if (pendingAutoSync && !s_kosyncRunning) {
+  // Phase 1: compute xpath + hash under RenderLock (FrameBufferLoan needs it).
+  if (pendingAutoSync && !syncArgsReady) {
     RenderLock lock(RenderLock::Mode::Try);
     if (lock.ownsLock()) {
-      launchAutoSync();
+      syncArgsReady = launchAutoSync();
+      pendingAutoSync = false;
     }
   }
 
-  // Check for completed sync task result.
-  if (!s_kosyncRunning && s_kosyncResult != 0) {
-    const bool success = (s_kosyncResult == 1u);
-    s_kosyncResult = 0;
+  // Phase 2: WiFi connect + TLS push, no lock held. Runs synchronously on the
+  // main task so no FreeRTOS task stack eats into the heap before TLS needs it.
+  if (syncArgsReady) {
+    syncArgsReady = false;
+    bool ok = false;
+    if (BookMetadataFetcher::ensureWifiConnected()) {
+      ok = silentKoSyncUpload(syncDocHash, syncXpath, syncPct);
+    } else {
+      LOG_DBG("KOSync", "Auto-sync: no WiFi");
+    }
 
-    if (success) {
+    if (ok) {
       autoSyncState = AutoSyncState::OK;
       pagesSinceLastAutoSync = 0;
     } else if (currentSyncIsInitial) {
@@ -548,7 +505,7 @@ void EpubReaderActivity::loop() {
     // Brief non-blocking toast: paint popup, wait, then trigger a normal page repaint.
     {
       RenderLock lock;
-      GUI.drawPopup(renderer, success ? tr(STR_SYNCED) : tr(STR_NOT_SYNCED));
+      GUI.drawPopup(renderer, ok ? tr(STR_SYNCED) : tr(STR_NOT_SYNCED));
     }
     delay(1500);
     requestUpdate();
@@ -1225,12 +1182,16 @@ void EpubReaderActivity::prepareForSleep() {
                                       ? KOReaderDocumentId::calculateFromFilename(bookPath)
                                       : KOReaderDocumentId::calculate(bookPath);
 
-      APP_STATE.kosyncUploadPending = true;
-      APP_STATE.kosyncPendingXpath = localKoPos.xpath;
-      APP_STATE.kosyncPendingPct = localKoPos.percentage;
-      APP_STATE.kosyncPendingDocHash = docHash;
-      LOG_DBG("KOSync", "Sleep-sync queued: xpath=%s pct=%.3f hash=%s",
-              localKoPos.xpath.c_str(), localKoPos.percentage, docHash.empty() ? "(empty)" : docHash.c_str());
+      if (docHash.empty()) {
+        LOG_ERR("KOSync", "Sleep-sync: could not compute document hash; upload skipped");
+      } else {
+        APP_STATE.kosyncUploadPending = true;
+        APP_STATE.kosyncPendingXpath = localKoPos.xpath;
+        APP_STATE.kosyncPendingPct = localKoPos.percentage;
+        APP_STATE.kosyncPendingDocHash = docHash;
+        LOG_DBG("KOSync", "Sleep-sync queued: xpath=%s pct=%.3f hash=%s",
+                localKoPos.xpath.c_str(), localKoPos.percentage, docHash.c_str());
+      }
     } else {
       LOG_ERR("KOSync", "Sleep-sync: could not save progress; upload skipped");
     }
@@ -1301,7 +1262,7 @@ bool EpubReaderActivity::pageTurn(bool isForwardTurn) {
       section->currentPage++;
       lastPageTurnTime = millis();
       // 30-page auto-sync check (forward turns only; don't fire while a sync is already running).
-      if (autoSyncState != AutoSyncState::FAILED_MID_READ && !pendingAutoSync && !s_kosyncRunning &&
+      if (autoSyncState != AutoSyncState::FAILED_MID_READ && !pendingAutoSync && !syncArgsReady &&
           KOREADER_STORE.hasCredentials()) {
         if (++pagesSinceLastAutoSync >= 15) {
           pagesSinceLastAutoSync = 0;

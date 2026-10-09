@@ -22,6 +22,10 @@ static SyncAttemptResult trySync(const std::string& documentHash, const std::str
     LOG_ERR("KOSync", "Auto-sync pull: auth failed (http=%d) — check credentials", KOReaderSyncClient::lastHttpCode);
     return SyncAttemptResult::AUTH_FAILED;
   }
+  if (pullResult == KOReaderSyncClient::LOW_MEMORY) {
+    LOG_ERR("KOSync", "Auto-sync pull: insufficient heap for TLS");
+    return SyncAttemptResult::TRANSIENT_FAILURE;
+  }
   if (pullResult == KOReaderSyncClient::NETWORK_ERROR) {
     LOG_ERR("KOSync", "Auto-sync pull: network error (http=%d)", KOReaderSyncClient::lastHttpCode);
     return SyncAttemptResult::TRANSIENT_FAILURE;
@@ -40,6 +44,9 @@ static SyncAttemptResult trySync(const std::string& documentHash, const std::str
 
   if (pushResult == KOReaderSyncClient::OK) return SyncAttemptResult::OK;
   if (pushResult == KOReaderSyncClient::AUTH_FAILED) return SyncAttemptResult::AUTH_FAILED;
+  if (pushResult == KOReaderSyncClient::LOW_MEMORY) {
+    LOG_ERR("KOSync", "Auto-sync push: insufficient heap for TLS");
+  }
   return SyncAttemptResult::TRANSIENT_FAILURE;
 }
 

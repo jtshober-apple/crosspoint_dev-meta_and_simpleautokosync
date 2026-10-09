@@ -64,7 +64,13 @@ class EpubReaderActivity final : public ReaderActivity {
   bool autoSyncTriggeredOnOpen = false;  // guard: trigger open sync only once
   bool pendingAutoSync = false;          // set when a sync should be kicked off
   bool currentSyncIsInitial = false;     // true when the pending sync is the on-open attempt
-  void launchAutoSync();
+  bool syncArgsReady = false;            // params computed, network I/O pending
+  std::string syncDocHash;               // document hash for pending sync
+  std::string syncXpath;                 // xpath for pending sync
+  float syncPct = 0.0f;                  // percentage for pending sync
+  // Computes sync params (hash, xpath, percentage) under the caller's RenderLock.
+  // Returns true when params are ready for the subsequent network phase.
+  bool launchAutoSync();
 
   // Toolbar reader menu (SETTINGS.readerMenuStyle == READER_MENU_TOOLBAR): drawn
   // over the page instead of pushing the full-screen list menu. Select opens the
