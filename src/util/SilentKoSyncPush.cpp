@@ -34,6 +34,15 @@ static SyncAttemptResult trySync(const std::string& documentHash, const std::str
   LOG_DBG("KOSync", "Auto-sync pull: result=%d http=%d remote=%.4f local=%.4f",
           pullResult, KOReaderSyncClient::lastHttpCode, remoteProgress.percentage, percentage);
 
+  // If the server already has a more advanced position, don't push stale local data.
+  // A small tolerance (0.5%) covers floating-point rounding across clients.
+  constexpr float kAheadTolerance = 0.005f;
+  if (pullResult == KOReaderSyncClient::OK && remoteProgress.percentage > percentage + kAheadTolerance) {
+    LOG_INF("KOSync", "Auto-sync: server is ahead (remote=%.4f local=%.4f) — skipping push",
+            remoteProgress.percentage, percentage);
+    return SyncAttemptResult::OK;
+  }
+
   KOReaderProgress pushProgress;
   pushProgress.document = documentHash;
   pushProgress.progress = xpath;
