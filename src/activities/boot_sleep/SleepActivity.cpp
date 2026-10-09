@@ -29,6 +29,7 @@
 #include "network/BookMetadataFetcher.h"
 #include "util/SilentKoSyncPush.h"
 #include "util/SilentWifiConnect.h"
+#include "WifiCredentialStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "images/Logo120.h"
@@ -526,37 +527,9 @@ void releaseSdFontCachesForDecode(const GfxRenderer& renderer) {
 void SleepActivity::onEnter() {
   Activity::onEnter();
 
-  // Attempt a silent KoSync upload on sleep.  Connect to the last-used WiFi
-  // network if not already connected, then push progress before the screen
-  // goes dark.  The document hash was pre-computed by EpubReaderActivity::
-  // prepareForSleep() on the main task so we never re-read the EPUB file here.
-  // Sleep proceeds regardless of the sync result.
-  if (APP_STATE.kosyncUploadPending && !APP_STATE.kosyncPendingDocHash.empty()) {
-    // Staged sync UI: show what is actually happening at each step rather than
-    // a generic "Loading" popup. WiFi connect can take several seconds; the
-    // upload is a separate step. Brief result feedback before the sleep screen.
-    bool weConnected = false;
-    const bool alreadyConnected = (WiFi.status() == WL_CONNECTED);
-    if (!alreadyConnected) {
-      GUI.drawPopup(renderer, tr(STR_CONNECTING));
-    }
-    const bool wifiOk = alreadyConnected || silentWifiConnectAggressive(weConnected);
-    if (wifiOk) {
-      GUI.drawPopup(renderer, tr(STR_KOSYNC_SYNCING));
-      const bool ok = silentKoSyncUpload(APP_STATE.kosyncPendingDocHash,
-                                         APP_STATE.kosyncPendingXpath,
-                                         APP_STATE.kosyncPendingPct);
-      if (ok) {
-        GUI.drawPopup(renderer, tr(STR_SYNCED));
-        delay(700);
-      }
-    } else {
-      GUI.drawPopup(renderer, tr(STR_CONNECTION_FAILED));
-      delay(600);
-      LOG_DBG("KOSync", "Sleep-sync: no WiFi available");
-    }
-    if (weConnected) WiFi.disconnect();
-  }
+  // Full-screen verbose KoSync sync before the sleep screen.  Only fires when
+  // sleeping from inside a book; home-screen sleeps skip this entirely.
+  doSleepKoSync();
 
   const bool renderQuickResume =
       SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
@@ -635,6 +608,128 @@ void SleepActivity::renderSleepScreenContent() const {
     default:
       return renderDefaultSleepScreen();
   }
+}
+
+void SleepActivity::doSleepKoSync() {
+  // Guard: only when sleeping from a book with pending upload data.
+  if (!APP_STATE.lastSleepFromReader || !APP_STATE.kosyncUploadPending ||
+      APP_STATE.kosyncPendingDocHash.empty()) {
+    return;
+  }
+
+  const int screenW = renderer.getScreenWidth();
+  const int screenH = renderer.getScreenHeight();
+  const int margin = screenW / 8;
+  const int headerLineH = renderer.getLineHeight(UI_12_FONT_ID) + 4;
+  const int statusLineH = renderer.getLineHeight(SMALL_FONT_ID) + 4;
+  int nextY = screenH / 4 + headerLineH + screenH / 12;
+
+  // Draw the full-screen sync status background.
+  renderer.clearScreen();
+  renderer.drawCenteredText(UI_12_FONT_ID, screenH / 4, tr(STR_KOSYNC_SLEEP_HEADER), true, EpdFontFamily::BOLD);
+  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+
+  // Append a status line and commit a fast partial refresh.
+  auto addLine = [&](const char* text) {
+    if (nextY + statusLineH > screenH - margin) return;
+    renderer.drawText(SMALL_FONT_ID, margin, nextY, text);
+    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    nextY += statusLineH;
+  };
+
+  bool weConnected = false;
+  bool wifiOk = (WiFi.status() == WL_CONNECTED);
+
+  if (wifiOk) {
+    char buf[80];
+    snprintf(buf, sizeof(buf), "%s %s", tr(STR_KOSYNC_CONNECTED_TO), WiFi.SSID().c_str());
+    addLine(buf);
+  } else {
+    // NVS last network first.
+    WiFi.mode(WIFI_STA);
+    WiFi.begin();
+    {
+      const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
+      char buf[80];
+      if (!lastSsid.empty()) {
+        snprintf(buf, sizeof(buf), "%s %s...", tr(STR_KOSYNC_CONNECTING_TO), lastSsid.c_str());
+      } else {
+        snprintf(buf, sizeof(buf), "%s", tr(STR_CONNECTING));
+      }
+      addLine(buf);
+    }
+    const unsigned long nvsDl = millis() + 8000;
+    while (WiFi.status() != WL_CONNECTED && millis() < nvsDl) delay(100);
+
+    if (WiFi.status() == WL_CONNECTED) {
+      wifiOk = true;
+      weConnected = true;
+      char buf[80];
+      snprintf(buf, sizeof(buf), "%s %s", tr(STR_KOSYNC_CONNECTED_TO), WiFi.SSID().c_str());
+      addLine(buf);
+    } else {
+      WiFi.disconnect();
+      delay(200);
+
+      const size_t count = WIFI_STORE.getCredentialCount();
+      const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
+
+      // Try each credential, showing its SSID on screen while connecting.
+      auto tryNetwork = [&](const WifiCredential& cred) -> bool {
+        char buf[80];
+        snprintf(buf, sizeof(buf), "%s %s...", tr(STR_KOSYNC_CONNECTING_TO), cred.ssid.c_str());
+        addLine(buf);
+        WiFi.begin(cred.ssid.c_str(), cred.password.c_str());
+        const unsigned long dl = millis() + 8000;
+        while (WiFi.status() != WL_CONNECTED && millis() < dl) delay(100);
+        if (WiFi.status() == WL_CONNECTED) return true;
+        WiFi.disconnect();
+        delay(200);
+        return false;
+      };
+
+      // Last-connected SSID first for the fastest common case.
+      if (!lastSsid.empty()) {
+        const auto cred = WIFI_STORE.findCredential(lastSsid);
+        if (cred && tryNetwork(*cred)) {
+          wifiOk = true;
+          weConnected = true;
+          char buf[80];
+          snprintf(buf, sizeof(buf), "%s %s", tr(STR_KOSYNC_CONNECTED_TO), WiFi.SSID().c_str());
+          addLine(buf);
+        }
+      }
+
+      // Sweep remaining stored credentials.
+      for (size_t i = 0; i < count && !wifiOk; ++i) {
+        const auto cred = WIFI_STORE.getCredentialAt(i);
+        if (!cred || cred->ssid == lastSsid) continue;
+        if (tryNetwork(*cred)) {
+          WIFI_STORE.setLastConnectedSsid(cred->ssid);
+          wifiOk = true;
+          weConnected = true;
+          char buf[80];
+          snprintf(buf, sizeof(buf), "%s %s", tr(STR_KOSYNC_CONNECTED_TO), WiFi.SSID().c_str());
+          addLine(buf);
+        }
+      }
+    }
+  }
+
+  if (wifiOk) {
+    addLine(tr(STR_KOSYNC_UPLOADING));
+    const bool ok = silentKoSyncUpload(APP_STATE.kosyncPendingDocHash,
+                                       APP_STATE.kosyncPendingXpath,
+                                       APP_STATE.kosyncPendingPct);
+    addLine(ok ? tr(STR_KOSYNC_COMPLETE) : tr(STR_KOSYNC_FAILED));
+    delay(ok ? 800 : 500);
+  } else {
+    addLine(tr(STR_CONNECTION_FAILED));
+    delay(500);
+    LOG_DBG("KOSync", "Sleep-sync: no WiFi available");
+  }
+
+  if (weConnected) WiFi.disconnect();
 }
 
 void SleepActivity::drawSyncPendingIndicator() const {
