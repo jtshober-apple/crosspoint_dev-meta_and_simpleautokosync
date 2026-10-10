@@ -28,6 +28,7 @@
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "KOReaderCredentialStore.h"
 #include "WifiCredentialStore.h"
 #include "activities/reader/ReaderUtils.h"
 #include "network/BookMetadataFetcher.h"
@@ -637,7 +638,7 @@ void sleepUploadTaskFn(void* param) {
   progress.document = p->docHash;
   progress.progress = p->xpath;
   progress.percentage = p->pct;
-  p->ok = (KOReaderSyncClient::updateProgress(progress) == KOReaderSyncClient::Error::OK);
+  p->ok = (KOReaderSyncClient::updateProgress(progress) == KOReaderSyncClient::OK);
   p->done = true;
   vTaskDelete(nullptr);
 }
