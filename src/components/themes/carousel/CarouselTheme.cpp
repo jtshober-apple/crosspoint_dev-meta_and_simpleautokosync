@@ -470,7 +470,7 @@ void CarouselTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonC
       const int highlightSize = kMenuIconSize + 2 * kHighlightPad;
       const int highlightY = metrics.rowY + (metrics.tileH - highlightSize) / 2;
       renderer.fillRoundedRect(iconX - kHighlightPad, highlightY, highlightSize, highlightSize, kCornerRadius,
-                               Color::Black);
+                               Color::LightGray);
     }
 
     if (rowIcon != nullptr) {
