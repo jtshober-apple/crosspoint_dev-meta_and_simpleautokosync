@@ -422,7 +422,7 @@ void setupDisplayAndFonts(bool seamless = false) {
 #endif  // OMIT_FONTS
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
-  renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
+  renderer.insertFont(SMALL_FONT_ID, ui10FontFamily);  // iA Duospace for all UI chrome
 
   // Discover and load SD card fonts
   sdFontSystem.begin(renderer);

@@ -43,4 +43,7 @@ class CarouselTheme : public LyraTheme {
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                       const std::function<std::string(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;
+  bool hasHorizontalButtonMenu() const override { return true; }
+  int getMenuTileWidth(const GfxRenderer& renderer, int buttonCount) const override;
+  int getMenuRowTop(const GfxRenderer& renderer) const override;
 };

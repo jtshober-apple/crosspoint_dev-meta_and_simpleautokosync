@@ -254,6 +254,12 @@ class BaseTheme {
   // grid from this, so hit bands always match the visuals (RoundedRaff derives
   // its row height from the font, not the metrics table).
   virtual int getMenuRowHeight(const GfxRenderer& renderer) const;
+  // Horizontal icon-bar themes (e.g. Carousel) return true here; HomeActivity
+  // then uses colTouch instead of rowTouch so each icon column hits correctly.
+  virtual bool hasHorizontalButtonMenu() const { return false; }
+  // For horizontal menus: column width per item and the Y where the touch area starts.
+  virtual int getMenuTileWidth(const GfxRenderer& renderer, int buttonCount) const { return 0; }
+  virtual int getMenuRowTop(const GfxRenderer& renderer) const { return 0; }
   // Also draws the wall clock opposite the battery when the user enabled
   // SETTINGS.clockShowInHeader and an RTC is present. On touch boards a
   // tappable back button leads the band (see HeaderBackTapTarget); root

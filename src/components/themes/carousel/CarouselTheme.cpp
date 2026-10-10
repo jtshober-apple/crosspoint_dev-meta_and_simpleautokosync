@@ -451,6 +451,21 @@ void CarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
 }
 
 // ---------------------------------------------------------------------------
+// Touch layout helpers — mirror computeMenuLayout so HomeActivity can build
+// a colTouch grid that exactly matches the drawn icon positions.
+// ---------------------------------------------------------------------------
+int CarouselTheme::getMenuTileWidth(const GfxRenderer& renderer, int buttonCount) const {
+  return buttonCount > 0 ? renderer.getScreenWidth() / buttonCount : 0;
+}
+
+int CarouselTheme::getMenuRowTop(const GfxRenderer& renderer) const {
+  const int tileH = kMenuIconPad + kMenuIconSize + kMenuIconPad;
+  const int labelLineHeight = renderer.getLineHeight(kMenuLabelFontId);
+  return renderer.getScreenHeight() - kButtonHintsH - tileH - kMenuLabelTopGap - labelLineHeight -
+         kMenuLabelBottomGap + kMenuRowDrop;
+}
+
+// ---------------------------------------------------------------------------
 // Horizontal icon-only menu row — anchored to bottom of screen
 // ---------------------------------------------------------------------------
 void CarouselTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,

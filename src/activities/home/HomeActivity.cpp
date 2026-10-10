@@ -469,9 +469,32 @@ void HomeActivity::loop() {
     return;
   }
 
-  const int menuTop = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
   const int renderedMenuCount =
       menuCount - (metrics.homeContinueReadingInMenu ? 0 : static_cast<int>(recentBooks.size()));
+
+  // Carousel uses a horizontal icon bar; all other themes use vertical rows.
+  if (GUI.hasHorizontalButtonMenu()) {
+    int menuCol = -1;
+    const int tileW = GUI.getMenuTileWidth(renderer, renderedMenuCount);
+    const int hMenuTop = GUI.getMenuRowTop(renderer);
+    const auto menuTouch =
+        mappedInput.colTouch(menuCol, 0, tileW, renderedMenuCount, hMenuTop, renderer.getScreenHeight(), tileW);
+    if (menuTouch != MappedInputManager::RowTouch::None) {
+      const int touchedIndex = menuCol + static_cast<int>(recentBooks.size());
+      if (menuTouch == MappedInputManager::RowTouch::Down) {
+        if (selectorIndex != touchedIndex) {
+          selectorIndex = touchedIndex;
+          requestUpdate();
+        }
+      } else {
+        selectorIndex = touchedIndex;
+        haptic_feedback::touchAction();
+        activateSelection();
+      }
+      return;
+    }
+  } else {
+  const int menuTop = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
   int menuRow = -1;
   // Row height from the theme, not the metrics table: RoundedRaff draws
   // font-derived rows and the touch grid must match the visuals exactly.
@@ -492,6 +515,7 @@ void HomeActivity::loop() {
       activateSelection();
     }
     return;
+  }
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
