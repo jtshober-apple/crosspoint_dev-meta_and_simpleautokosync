@@ -44,12 +44,7 @@ constexpr int kBaseDisplayCenterW = CarouselTheme::kBaseDisplayCenterW;
 constexpr int kBaseDisplayCenterH = CarouselTheme::kBaseDisplayCenterH;
 constexpr int kDisplayCenterW = CarouselTheme::kDisplayCenterW;
 constexpr int kDisplayCenterH = CarouselTheme::kDisplayCenterH;
-constexpr int kNearSideW = (kBaseDisplayCenterW * 26) / 100;
-constexpr int kFarSideW = (kBaseDisplayCenterW * 21) / 100;
 constexpr int kNearSideInnerH = (kBaseDisplayCenterH * 90) / 100;
-constexpr int kNearSideOuterH = (kBaseDisplayCenterH * 82) / 100;
-constexpr int kFarSideInnerH = (kBaseDisplayCenterH * 84) / 100;
-constexpr int kFarSideOuterH = (kBaseDisplayCenterH * 74) / 100;
 constexpr int kSideOutlineW = 2;
 constexpr int kSideCornerRadius = 5;
 constexpr int kCoverStackLift = 15;
@@ -286,15 +281,12 @@ void CarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
   const int sideTileY = centerDrawY + (kDisplayCenterH - sideMaxHeight) / 2;
 
   const int centerX = centerCoverSlotRect.x;
-  const int nearOverlap = 4;
-  const int farOverlap = 2;
-  constexpr int nearCoverInset = 10;
-  const int baseLeftNearX = centerX - kNearSideW + nearOverlap;
-  const int baseRightNearX = centerX + kDisplayCenterW - nearOverlap;
-  const int leftNearX = baseLeftNearX + nearCoverInset;
-  const int rightNearX = baseRightNearX - nearCoverInset;
-  const int leftFarX = std::max(0, baseLeftNearX - kFarSideW + farOverlap);
-  const int rightFarX = std::min(screenW - kFarSideW, baseRightNearX + kNearSideW - farOverlap);
+  constexpr int kSideUnderlapPx = 12;  // pixels the side cover slides under the center cover
+  const int leftSideX = 0;
+  const int leftSideW = centerX + kSideUnderlapPx;
+  const int rightSideX = centerX + kDisplayCenterW - kSideUnderlapPx;
+  const int rightSideW = screenW - rightSideX;
+  const int sideH = kNearSideInnerH;
 
   auto drawCenterCover = [&](int bookIdx, Rect& outRect) -> bool {
     if (bookIdx < 0 || bookIdx >= bookCount) return false;
@@ -302,7 +294,7 @@ void CarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     outRect = shrinkCenterCoverRect(centerCoverSlotRect);
 
     if (!book.coverBmpPath.empty()) {
-      const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, kCenterThumbH);
+      const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, CarouselMetrics::values.homeCoverHeight);
       HalFile file;
       if (Storage.openFileForRead("HOME", thumbPath, file)) {
         Bitmap bitmap(file);
@@ -368,7 +360,7 @@ void CarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     const RecentBook& book = recentBooks[bookIdx];
 
     if (!book.coverBmpPath.empty()) {
-      const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, kSideCoverMaxH);
+      const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, CarouselMetrics::values.homeCoverHeight);
       HalFile file;
       if (Storage.openFileForRead("HOME", thumbPath, file)) {
         Bitmap bitmap(file);
@@ -395,14 +387,9 @@ void CarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
 
     const int leftNearIdx = (centerIdx + bookCount - 1) % bookCount;
-    const int leftFarIdx = (centerIdx + bookCount - 2) % bookCount;
     const int rightNearIdx = (centerIdx + 1) % bookCount;
-    const int rightFarIdx = (centerIdx + 2) % bookCount;
-
-    if (bookCount >= 5) drawSideCover(leftFarIdx, leftFarX, kFarSideW, kFarSideInnerH, kFarSideOuterH);
-    if (bookCount >= 4) drawSideCover(rightFarIdx, rightFarX, kFarSideW, kFarSideOuterH, kFarSideInnerH);
-    if (bookCount >= 2) drawSideCover(leftNearIdx, leftNearX, kNearSideW, kNearSideInnerH, kNearSideOuterH);
-    if (bookCount >= 3) drawSideCover(rightNearIdx, rightNearX, kNearSideW, kNearSideOuterH, kNearSideInnerH);
+    if (bookCount >= 2) drawSideCover(leftNearIdx, leftSideX, leftSideW, sideH, sideH);
+    if (bookCount >= 3) drawSideCover(rightNearIdx, rightSideX, rightSideW, sideH, sideH);
 
     Rect centerCoverRect{};
     drawCenterCover(centerIdx, centerCoverRect);
@@ -430,6 +417,15 @@ void CarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
       else
         renderer.drawRect(dotX, dotsY, kDotSize, kDotSize, true);
       dotX += kDotSize + kDotGap;
+    }
+
+    // Author line below dots
+    const int authorY = dotsY + kDotSize + 5;
+    const std::string& authorStr = recentBooks[centerIdx].author;
+    if (!authorStr.empty()) {
+      const int authorW = renderer.getTextWidth(UI_12_FONT_ID, authorStr.c_str(), EpdFontFamily::REGULAR);
+      renderer.drawText(UI_12_FONT_ID, textCenterX - authorW / 2, authorY, authorStr.c_str(), true,
+                        EpdFontFamily::REGULAR);
     }
 
     coverBufferStored = storeCoverBuffer();
