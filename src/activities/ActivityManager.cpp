@@ -11,7 +11,6 @@
 #include <algorithm>
 
 #include "CrossPointSettings.h"
-#include "CrossPointState.h"
 #include "HapticFeedback.h"
 #include "OpdsServerStore.h"
 #include "boot_sleep/BootActivity.h"
@@ -25,7 +24,6 @@
 #include "network/CrossPointWebServerActivity.h"
 #include "network/UsbDriveActivity.h"
 #include "plugins/PluginCatalogActivity.h"
-#include "reader/KOReaderSyncActivity.h"
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
@@ -325,23 +323,6 @@ void ActivityManager::goToReader(std::string path, const bool allowFastInitialRe
 }
 
 void ActivityManager::goToSleep(bool fromTimeout) {
-  if (APP_STATE.kosyncUploadPending && APP_STATE.lastSleepFromReader &&
-      !APP_STATE.kosyncPendingEpubPath.empty()) {
-    CrossPointPosition localPos;
-    localPos.spineIndex = APP_STATE.kosyncPendingSpineIndex;
-    localPos.pageNumber = APP_STATE.kosyncPendingPage;
-    localPos.totalPages = APP_STATE.kosyncPendingPageCount;
-    SavedProgressPosition localKoPos;
-    localKoPos.xpath = APP_STATE.kosyncPendingXpath;
-    localKoPos.percentage = APP_STATE.kosyncPendingPct;
-    replaceActivity(makeUniqueNoThrow<KOReaderSyncActivity>(renderer, mappedInput,
-                                                            APP_STATE.kosyncPendingEpubPath, localPos,
-                                                            std::move(localKoPos),
-                                                            APP_STATE.kosyncPendingChapterName,
-                                                            /*sleepAfterSync=*/true));
-    loop();
-    return;
-  }
   replaceActivity(std::make_unique<SleepActivity>(renderer, mappedInput, fromTimeout));
   loop();  // Important: sleep screen must be rendered immediately, the caller will go to sleep right after this returns
 }

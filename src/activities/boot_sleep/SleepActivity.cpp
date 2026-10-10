@@ -21,8 +21,14 @@
 #include <limits>
 #include <string>
 
+#include <KOReaderSyncClient.h>
+#include <WiFi.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "WifiCredentialStore.h"
 #include "activities/reader/ReaderUtils.h"
 #include "network/BookMetadataFetcher.h"
 #include "components/UITheme.h"
@@ -615,10 +621,124 @@ void SleepActivity::renderSleepScreenContent() const {
   }
 }
 
+namespace {
+
+struct SleepUploadParam {
+  std::string docHash;
+  std::string xpath;
+  float pct = 0.0f;
+  volatile bool done = false;
+  volatile bool ok = false;
+};
+
+void sleepUploadTaskFn(void* param) {
+  auto* p = static_cast<SleepUploadParam*>(param);
+  KOReaderProgress progress;
+  progress.document = p->docHash;
+  progress.progress = p->xpath;
+  progress.percentage = p->pct;
+  p->ok = (KOReaderSyncClient::updateProgress(progress) == KOReaderSyncClient::Error::OK);
+  p->done = true;
+  vTaskDelete(nullptr);
+}
+
+// Try connecting to WiFi with given SSID/password. Returns true if connected.
+bool tryWifiConnect(const std::string& ssid, const std::string& password, unsigned long timeoutMs) {
+  if (ssid.empty()) return false;
+  WiFi.begin(ssid.c_str(), password.empty() ? nullptr : password.c_str());
+  const unsigned long deadline = millis() + timeoutMs;
+  while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
+    delay(100);
+  }
+  return WiFi.status() == WL_CONNECTED;
+}
+
+}  // namespace
+
 void SleepActivity::doSleepKoSync() {
-  // KoSync on sleep is now handled by KOReaderSyncActivity (launched by
-  // ActivityManager::goToSleep() before SleepActivity is created).
-  // This function is intentionally a no-op.
+  if (!APP_STATE.kosyncUploadPending || !APP_STATE.lastSleepFromReader) return;
+  if (!KOREADER_STORE.hasCredentials()) return;
+
+  const std::string docHash = APP_STATE.kosyncPendingDocHash;
+  const std::string xpath = APP_STATE.kosyncPendingXpath;
+  const float pct = APP_STATE.kosyncPendingPct;
+  if (docHash.empty() || xpath.empty()) {
+    LOG_DBG("KOSync", "Sleep-sync: nothing to upload (hash or xpath empty)");
+    return;
+  }
+
+  constexpr unsigned long CONNECT_TIMEOUT_MS = 8000;
+  constexpr unsigned long UPLOAD_TIMEOUT_MS = 15000;
+
+  bool connected = (WiFi.status() == WL_CONNECTED);
+
+  if (!connected) {
+    // Priority 1: last connected SSID from WIFI_STORE
+    const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
+    if (!lastSsid.empty()) {
+      const auto cred = WIFI_STORE.findCredential(lastSsid);
+      const std::string pw = cred ? cred->password : "";
+      LOG_DBG("KOSync", "Sleep-sync: trying last-connected SSID: %s", lastSsid.c_str());
+      connected = tryWifiConnect(lastSsid, pw, CONNECT_TIMEOUT_MS);
+    }
+  }
+
+  if (!connected) {
+    // Priority 2: NVS credentials (no-arg begin — uses ESP's stored credentials)
+    LOG_DBG("KOSync", "Sleep-sync: trying NVS credentials");
+    WiFi.begin();
+    const unsigned long deadline = millis() + CONNECT_TIMEOUT_MS;
+    while (WiFi.status() != WL_CONNECTED && millis() < deadline) delay(100);
+    connected = (WiFi.status() == WL_CONNECTED);
+  }
+
+  if (!connected) {
+    // Priority 3: sweep all stored WIFI_STORE credentials
+    const size_t count = WIFI_STORE.getCredentialCount();
+    const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
+    for (size_t i = 0; i < count && !connected; ++i) {
+      const auto cred = WIFI_STORE.getCredentialAt(i);
+      if (!cred || cred->ssid == lastSsid) continue;  // already tried last-connected
+      LOG_DBG("KOSync", "Sleep-sync: trying SSID: %s", cred->ssid.c_str());
+      connected = tryWifiConnect(cred->ssid, cred->password, CONNECT_TIMEOUT_MS);
+    }
+  }
+
+  if (!connected) {
+    LOG_DBG("KOSync", "Sleep-sync: could not connect to any network");
+    return;
+  }
+
+  LOG_DBG("KOSync", "Sleep-sync: connected, uploading...");
+
+  auto* up = new (std::nothrow) SleepUploadParam{docHash, xpath, pct};
+  if (!up) {
+    LOG_ERR("KOSync", "Sleep-sync: OOM allocating upload param");
+    return;
+  }
+
+  TaskHandle_t uploadTask = nullptr;
+  xTaskCreate(&sleepUploadTaskFn, "KOUploadSleep", 16384, up, 1, &uploadTask);
+
+  const unsigned long deadline = millis() + UPLOAD_TIMEOUT_MS;
+  while (!up->done && millis() < deadline) delay(50);
+
+  const bool ok = up->done && up->ok;
+  if (uploadTask && !up->done) {
+    // Timed out — task still running; let it finish then clean up
+    // (we're going to sleep anyway; the task will delete itself)
+    LOG_ERR("KOSync", "Sleep-sync: upload timed out");
+  } else {
+    LOG_DBG("KOSync", "Sleep-sync: upload %s", ok ? "succeeded" : "failed");
+  }
+  delete up;
+
+  if (ok) {
+    APP_STATE.kosyncUploadPending = false;
+    APP_STATE.kosyncPendingXpath.clear();
+    APP_STATE.kosyncPendingDocHash.clear();
+    APP_STATE.saveToFile();
+  }
 }
 
 void SleepActivity::drawSyncPendingIndicator() const {

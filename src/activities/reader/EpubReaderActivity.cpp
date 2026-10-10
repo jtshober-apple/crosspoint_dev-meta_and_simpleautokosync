@@ -56,6 +56,19 @@
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 
+// ── Silent on-open KoSync background task ────────────────────────────────────
+// Runs on a dedicated 16KB FreeRTOS task because TLS handshake in
+// KOReaderSyncClient::updateProgress() needs ~20KB stack — more than the main
+// task's ~8-16KB budget. Only spawned when WiFi is already connected; no WiFi
+// management here (that's the sleep sync's job with its full credential sweep).
+struct EpubReaderActivity::SilentSyncTaskParam {
+  std::string docHash;
+  std::string xpath;
+  float pct = 0.0f;
+  volatile bool done = false;
+  volatile bool ok = false;
+};
+
 namespace {
 // The X4 Pro and X4 Classic carry the X4's panel but sit outside isXteinkDevice()
 // (that helper also gates power management). Overlay refresh choices are per-panel:
@@ -179,7 +192,27 @@ void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string&
 
 }  // namespace
 
+void EpubReaderActivity::silentSyncTaskFn(void* param) {
+  auto* p = static_cast<SilentSyncTaskParam*>(param);
+  KOReaderProgress progress;
+  progress.document = p->docHash;
+  progress.progress = p->xpath;
+  progress.percentage = p->pct;
+  p->ok = (KOReaderSyncClient::updateProgress(progress) == KOReaderSyncClient::Error::OK);
+  p->done = true;
+  vTaskDelete(nullptr);
+}
+
 EpubReaderActivity::~EpubReaderActivity() {
+  // Clean up any still-running silent sync task (it deletes itself when done,
+  // but if we're being destroyed early we must cancel it to avoid a dangling param).
+  if (silentSyncTaskHandle && silentSyncParams && !silentSyncParams->done) {
+    vTaskDelete(silentSyncTaskHandle);
+  }
+  delete silentSyncParams;
+  silentSyncParams = nullptr;
+  silentSyncTaskHandle = nullptr;
+
   ImageBlock::setExtractor(nullptr, nullptr);
   // ActivityManager destroys activities with its RenderLock already held;
   // taking another here self-deadlocks (renderingMutex is non-recursive).
@@ -444,8 +477,9 @@ void EpubReaderActivity::loop() {
   rememberBookOnceRendered();
 
   // ── On-open KoSync ──────────────────────────────────────────────────────────
-  // After the first page renders, launch the full KOReaderSyncActivity so the
-  // user gets WiFi selection + compare/upload UI rather than a silent attempt.
+  // After the first page renders, silently upload if WiFi is already connected.
+  // No WiFi management here — if not connected, the sleep sync handles it with
+  // a full credential sweep. This avoids any UI disruption while reading.
   if (!autoSyncTriggeredOnOpen && pageRendered.load(std::memory_order_acquire) && epub &&
       KOREADER_STORE.hasCredentials()) {
     autoSyncTriggeredOnOpen = true;
@@ -455,10 +489,43 @@ void EpubReaderActivity::loop() {
       autoSyncState = AutoSyncState::OK;
       syncIconPagesRemaining = 5;
       requestUpdate();
-    } else {
-      launchKOReaderSync();
-      return;
+    } else if (WiFi.status() == WL_CONNECTED && !silentSyncParams) {
+      // WiFi already up — fire a silent background upload on a dedicated 16KB task.
+      const int currentPage = section ? section->currentPage : nextPageNumber;
+      const int totalPages = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;
+      if (saveProgress(currentSpineIndex, currentPage, totalPages)) {
+        CrossPointPosition localPos = getCurrentPosition();
+        GfxRenderer::FrameBufferLoan loan(renderer);
+        const SavedProgressPosition localKoPos = ProgressMapper::toSavedProgress(epub, localPos);
+        const DocumentMatchMethod method = KOREADER_STORE.getMatchMethod();
+        const std::string docHash = (method == DocumentMatchMethod::FILENAME)
+                                        ? KOReaderDocumentId::calculateFromFilename(bookPath)
+                                        : KOReaderDocumentId::calculate(bookPath);
+        if (!docHash.empty()) {
+          silentSyncParams = new (std::nothrow) SilentSyncTaskParam{docHash, localKoPos.xpath, localKoPos.percentage};
+          if (silentSyncParams) {
+            autoSyncState = AutoSyncState::SYNCING;
+            requestUpdate();
+            xTaskCreate(&silentSyncTaskFn, "KOSyncOpen", 16384, silentSyncParams, 1, &silentSyncTaskHandle);
+          }
+        }
+      }
     }
+  }
+
+  // ── Poll silent on-open sync task ──────────────────────────────────────────
+  if (silentSyncParams && silentSyncParams->done) {
+    const bool ok = silentSyncParams->ok;
+    delete silentSyncParams;
+    silentSyncParams = nullptr;
+    silentSyncTaskHandle = nullptr;
+    autoSyncState = ok ? AutoSyncState::OK : AutoSyncState::FAILED;
+    syncIconPagesRemaining = 5;
+    if (ok) {
+      // Uploading current position to server succeeded; no further sleep-sync needed.
+      APP_STATE.kosyncUploadPending = false;
+    }
+    requestUpdate();
   }
   // ── End on-open KoSync ──────────────────────────────────────────────────────
 
@@ -2075,6 +2142,8 @@ void EpubReaderActivity::renderStatusBar() const {
 
   uint8_t syncIconState = 0;
   if (autoSyncState == AutoSyncState::OK) syncIconState = 1;
+  else if (autoSyncState == AutoSyncState::FAILED) syncIconState = 2;
+  else if (autoSyncState == AutoSyncState::SYNCING) syncIconState = 3;
 
   GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset, true, currentPageBookmarked,
                     section ? section->isBuilding() : false, syncIconState);

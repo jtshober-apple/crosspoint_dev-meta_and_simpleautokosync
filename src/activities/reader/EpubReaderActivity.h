@@ -10,6 +10,9 @@
 #include <optional>
 #include <vector>
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
 #include "BookmarkEntry.h"
 #include "ChapterPosition.h"
 #include "EpubReaderMenuActivity.h"
@@ -56,8 +59,15 @@ class EpubReaderActivity final : public ReaderActivity {
   bool pendingReadFolderMove = false;
 
   // ── KoSync status bar icon ────────────────────────────────────────────────
-  enum class AutoSyncState : uint8_t { NEVER_TRIED, OK };
+  enum class AutoSyncState : uint8_t { NEVER_TRIED, SYNCING, OK, FAILED };
   AutoSyncState autoSyncState = AutoSyncState::NEVER_TRIED;
+
+  // ── Silent on-open KoSync background task ────────────────────────────────
+  // Struct is forward-declared here; definition lives in the .cpp anonymous namespace.
+  struct SilentSyncTaskParam;
+  TaskHandle_t silentSyncTaskHandle = nullptr;
+  SilentSyncTaskParam* silentSyncParams = nullptr;
+  static void silentSyncTaskFn(void* param);
   // Page turns remaining before the sync status icon clears from the status bar.
   int syncIconPagesRemaining = 0;
   bool autoSyncTriggeredOnOpen = false;  // guard: trigger open sync only once
