@@ -333,15 +333,34 @@ void HomeActivity::loop() {
   // Cover grid home splits navigation by button group (see below); the flat
   // next/previous cycle is for the classic list home only.
   if (!coverGridUi) {
-    buttonNavigator.onNext([this, menuCount] {
-      selectorIndex = ButtonNavigator::nextIndex(selectorIndex, menuCount);
-      requestUpdate();
-    });
+    if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::CAROUSEL) {
+      // Physical buttons cycle only the carousel covers; menu items are touch-only.
+      const int bookCount = static_cast<int>(recentBooks.size());
+      if (bookCount > 0) {
+        buttonNavigator.onNext([this, bookCount] {
+          selectorIndex = (selectorIndex + 1) % bookCount;
+          coverRendered = false;
+          coverBufferStored = false;
+          requestUpdate();
+        });
+        buttonNavigator.onPrevious([this, bookCount] {
+          selectorIndex = (selectorIndex + bookCount - 1) % bookCount;
+          coverRendered = false;
+          coverBufferStored = false;
+          requestUpdate();
+        });
+      }
+    } else {
+      buttonNavigator.onNext([this, menuCount] {
+        selectorIndex = ButtonNavigator::nextIndex(selectorIndex, menuCount);
+        requestUpdate();
+      });
 
-    buttonNavigator.onPrevious([this, menuCount] {
-      selectorIndex = ButtonNavigator::previousIndex(selectorIndex, menuCount);
-      requestUpdate();
-    });
+      buttonNavigator.onPrevious([this, menuCount] {
+        selectorIndex = ButtonNavigator::previousIndex(selectorIndex, menuCount);
+        requestUpdate();
+      });
+    }
   }
 
   const auto swipe = mappedInput.wasSwipe();
