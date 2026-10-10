@@ -618,6 +618,10 @@ void HomeActivity::render(RenderLock&&) {
   if (!firstRenderDone) {
     firstRenderDone = true;
     requestUpdate();
+  } else if (!coverRendered) {
+    // Carousel advance: first pass showed center cover + silhouettes.
+    // Schedule the second pass to load side cover BMPs from SD.
+    requestUpdate();
   } else if (!recentsLoaded && !recentsLoading) {
     recentsLoading = true;
     const int themeThumbHeight = GUI.homeCoverThumbHeight(renderer);

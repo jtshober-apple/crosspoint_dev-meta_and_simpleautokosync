@@ -19,8 +19,33 @@ void silentWifiBegin() {
   // WiFi.begin() is non-blocking: the ESP32 WiFi stack associates in the
   // background.  The caller polls WiFi.status() for WL_CONNECTED.
   WiFi.mode(WIFI_STA);
-  WiFi.begin();  // reconnects using NVS-stored SSID + passphrase
-  LOG_DBG("WiFiConnect", "Begin (NVS last network, non-blocking)");
+
+  // Prefer WIFI_STORE's last-connected credential: explicit ssid+pass is more
+  // reliable than NVS which may be empty (if the device has only ever used
+  // WIFI_STORE) or stale.
+  const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
+  if (!lastSsid.empty()) {
+    const auto cred = WIFI_STORE.findCredential(lastSsid);
+    if (cred) {
+      WiFi.begin(cred->ssid.c_str(), cred->password.c_str());
+      LOG_DBG("WiFiConnect", "Begin (WIFI_STORE last: %s, non-blocking)", cred->ssid.c_str());
+      return;
+    }
+  }
+
+  // Fall back to first stored credential.
+  if (WIFI_STORE.getCredentialCount() > 0) {
+    const auto cred = WIFI_STORE.getCredentialAt(0);
+    if (cred) {
+      WiFi.begin(cred->ssid.c_str(), cred->password.c_str());
+      LOG_DBG("WiFiConnect", "Begin (WIFI_STORE[0]: %s, non-blocking)", cred->ssid.c_str());
+      return;
+    }
+  }
+
+  // Last resort: NVS-stored SSID + passphrase.
+  WiFi.begin();
+  LOG_DBG("WiFiConnect", "Begin (NVS, non-blocking)");
 }
 
 bool silentWifiConnectAggressive(bool& weConnected) {

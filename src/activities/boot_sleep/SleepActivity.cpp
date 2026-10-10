@@ -688,51 +688,56 @@ void SleepActivity::doSleepKoSync() {
       return false;
     };
 
-    // Priority 1: NVS no-arg connect — device was on this network moments ago.
-    // Call begin() FIRST; WiFi.SSID() only returns the NVS network name after
-    // begin() has been called (esp_wifi_stop() clears it from the driver state).
-    WiFi.begin();
-    delay(100);
-    {
-      char buf[80];
-      const std::string nvsHint(WiFi.SSID().c_str());
-      if (!nvsHint.empty()) {
-        snprintf(buf, sizeof(buf), "%s %s...", tr(STR_KOSYNC_CONNECTING_TO), nvsHint.c_str());
-      } else {
-        snprintf(buf, sizeof(buf), "%s", tr(STR_CONNECTING));
+    const size_t count = WIFI_STORE.getCredentialCount();
+    const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
+
+    // Priority 1: WIFI_STORE last-connected — explicit credentials are more
+    // reliable than NVS which may be empty or stale if the device has only
+    // ever used WIFI_STORE.
+    if (!lastSsid.empty()) {
+      const auto cred = WIFI_STORE.findCredential(lastSsid);
+      if (cred && tryNetwork(*cred)) {
+        WIFI_STORE.setLastConnectedSsid(cred->ssid);
+        wifiOk = true;
+        weConnected = true;
       }
-      addLine(buf);
     }
-    const unsigned long nvsDl = millis() + 8000;
-    while (WiFi.status() != WL_CONNECTED && millis() < nvsDl) delay(100);
-    if (WiFi.status() == WL_CONNECTED) {
-      wifiOk = true;
-      weConnected = true;
-    } else {
-      WiFi.disconnect();
-      delay(200);
 
-      const size_t count = WIFI_STORE.getCredentialCount();
-      const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
-
-      // Priority 2: WIFI_STORE last-connected.
-      if (!lastSsid.empty()) {
-        const auto cred = WIFI_STORE.findCredential(lastSsid);
-        if (cred && tryNetwork(*cred)) {
-          WIFI_STORE.setLastConnectedSsid(cred->ssid);
-          wifiOk = true;
-          weConnected = true;
+    if (!wifiOk) {
+      // Priority 2: NVS no-arg connect — device may have credentials that
+      // pre-date WIFI_STORE, or the WIFI_STORE entry above failed.
+      // Call begin() first; WiFi.SSID() only returns the NVS name after
+      // begin() has been called (esp_wifi_stop() clears driver state).
+      WiFi.begin();
+      delay(100);
+      {
+        char buf[80];
+        const std::string nvsHint(WiFi.SSID().c_str());
+        if (!nvsHint.empty()) {
+          snprintf(buf, sizeof(buf), "%s %s...", tr(STR_KOSYNC_CONNECTING_TO), nvsHint.c_str());
+        } else {
+          snprintf(buf, sizeof(buf), "%s", tr(STR_CONNECTING));
         }
+        addLine(buf);
       }
+      const unsigned long nvsDl = millis() + 8000;
+      while (WiFi.status() != WL_CONNECTED && millis() < nvsDl) delay(100);
+      if (WiFi.status() == WL_CONNECTED) {
+        wifiOk = true;
+        weConnected = true;
+      } else {
+        WiFi.disconnect();
+        delay(200);
 
-      // Priority 3: sweep remaining stored credentials.
-      for (size_t i = 0; i < count && !wifiOk; ++i) {
-        const auto cred = WIFI_STORE.getCredentialAt(i);
-        if (!cred || cred->ssid == lastSsid) continue;
-        if (tryNetwork(*cred)) {
-          WIFI_STORE.setLastConnectedSsid(cred->ssid);
-          wifiOk = true;
-          weConnected = true;
+        // Priority 3: sweep remaining WIFI_STORE credentials.
+        for (size_t i = 0; i < count && !wifiOk; ++i) {
+          const auto cred = WIFI_STORE.getCredentialAt(i);
+          if (!cred || cred->ssid == lastSsid) continue;
+          if (tryNetwork(*cred)) {
+            WIFI_STORE.setLastConnectedSsid(cred->ssid);
+            wifiOk = true;
+            weConnected = true;
+          }
         }
       }
     }

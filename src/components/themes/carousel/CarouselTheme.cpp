@@ -393,14 +393,27 @@ void CarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
   };
 
   if (!coverRendered) {
+    // Detect a carousel advance (center book changed since last render).
+    // On advance: draw only the center BMP immediately so the user sees it
+    // right away; leave coverRendered=false so HomeActivity schedules a
+    // second pass that fills in the side covers.
+    const bool isCarouselAdvance = (lastSelectorIndex >= 0 && centerIdx != lastSelectorIndex);
     lastCarouselSelectorIndex.store(centerIdx, std::memory_order_relaxed);
 
     renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
 
     const int leftNearIdx = (centerIdx + bookCount - 1) % bookCount;
     const int rightNearIdx = (centerIdx + 1) % bookCount;
-    if (bookCount >= 2) drawSideCover(leftNearIdx, leftSideX, leftSideW, sideH, sideH);
-    if (bookCount >= 3) drawSideCover(rightNearIdx, rightSideX, rightSideW, sideH, sideH);
+    if (!isCarouselAdvance) {
+      // Full render: load side cover BMPs too.
+      if (bookCount >= 2) drawSideCover(leftNearIdx, leftSideX, leftSideW, sideH, sideH);
+      if (bookCount >= 3) drawSideCover(rightNearIdx, rightSideX, rightSideW, sideH, sideH);
+    } else {
+      // First pass after advance: draw silhouette placeholders for sides so
+      // the layout looks complete while the second pass loads the real BMPs.
+      if (bookCount >= 2) fillPerspectiveSilhouette(renderer, leftSideX, sideTileY, leftSideW, sideH, sideH);
+      if (bookCount >= 3) fillPerspectiveSilhouette(renderer, rightSideX, sideTileY, rightSideW, sideH, sideH);
+    }
 
     Rect centerCoverRect{};
     drawCenterCover(centerIdx, centerCoverRect);
@@ -439,8 +452,15 @@ void CarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
                         EpdFontFamily::REGULAR);
     }
 
-    coverBufferStored = storeCoverBuffer();
-    coverRendered = coverBufferStored;
+    if (!isCarouselAdvance) {
+      // Full render complete: snapshot the buffer so future frames can restore
+      // without re-reading SD.
+      coverBufferStored = storeCoverBuffer();
+      coverRendered = coverBufferStored;
+    }
+    // On carousel advance, coverRendered stays false; HomeActivity will call
+    // requestUpdate() so we re-enter here with the same centerIdx and render
+    // the side covers on the second pass.
   } else if (lastCenterCoverRect.width <= 0 || lastCenterCoverRect.height <= 0) {
     lastCenterCoverRect = shrinkCenterCoverRect(centerCoverSlotRect);
   }
