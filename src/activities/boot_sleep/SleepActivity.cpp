@@ -719,7 +719,7 @@ void SleepActivity::doSleepKoSync() {
   }
 
   TaskHandle_t uploadTask = nullptr;
-  xTaskCreate(&sleepUploadTaskFn, "KOUploadSleep", 16384, up, 1, &uploadTask);
+  xTaskCreate(&sleepUploadTaskFn, "KOUploadSleep", 32768, up, 1, &uploadTask);
 
   const unsigned long deadline = millis() + UPLOAD_TIMEOUT_MS;
   while (!up->done && millis() < deadline) delay(50);

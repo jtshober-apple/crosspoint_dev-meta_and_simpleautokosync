@@ -506,7 +506,7 @@ void EpubReaderActivity::loop() {
           if (silentSyncParams) {
             autoSyncState = AutoSyncState::SYNCING;
             requestUpdate();
-            xTaskCreate(&silentSyncTaskFn, "KOSyncOpen", 16384, silentSyncParams, 1, &silentSyncTaskHandle);
+            xTaskCreate(&silentSyncTaskFn, "KOSyncOpen", 32768, silentSyncParams, 1, &silentSyncTaskHandle);
           }
         }
       }
