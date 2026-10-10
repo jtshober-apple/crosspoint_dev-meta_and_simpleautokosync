@@ -48,8 +48,6 @@
 #include "network/BookMetadataFetcher.h"
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
-#include "util/SilentKoSyncPush.h"
-#include "util/SilentWifiConnect.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/settings/TextSettingsActivity.h"
 #include "components/UITheme.h"
@@ -202,36 +200,6 @@ EpubReaderActivity::~EpubReaderActivity() {
   }
 }
 
-bool EpubReaderActivity::launchAutoSync() {
-  // Phase 1: compute sync params under the caller's RenderLock.
-  // No FreeRTOS task is spawned; the network I/O runs on the main task in loop()
-  // after this returns, without any lock held. This keeps the 8 KB contiguous task
-  // stack off the heap so KOReaderSyncClient's TLS handshake can find its 20 KB block.
-  if (!epub || !KOREADER_STORE.hasCredentials()) return false;
-
-  const int currentPage = section ? section->currentPage : nextPageNumber;
-  const int totalPages = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;
-  saveProgress(currentSpineIndex, currentPage, totalPages);
-
-  const DocumentMatchMethod method = KOREADER_STORE.getMatchMethod();
-  syncDocHash = (method == DocumentMatchMethod::FILENAME)
-                    ? KOReaderDocumentId::calculateFromFilename(bookPath)
-                    : KOReaderDocumentId::calculate(bookPath);
-  if (syncDocHash.empty()) {
-    LOG_ERR("KOSync", "Auto-sync: could not compute document hash for '%s'", bookPath.c_str());
-    return false;
-  }
-
-  CrossPointPosition localPos = getCurrentPosition();
-  GfxRenderer::FrameBufferLoan loan(renderer);
-  const SavedProgressPosition pos = ProgressMapper::toSavedProgress(epub, localPos);
-  syncXpath = pos.xpath;
-  syncPct = pos.percentage;
-
-  LOG_DBG("KOSync", "Auto-sync params ready (initial=%d hash=%s)", currentSyncIsInitial ? 1 : 0,
-          syncDocHash.c_str());
-  return true;
-}
 
 bool EpubReaderActivity::loadBook() {
   auto loadedEpub = makeUniqueNoThrow<Epub>(bookPath, "/.crosspoint");
@@ -475,95 +443,24 @@ void EpubReaderActivity::loop() {
 
   rememberBookOnceRendered();
 
-  // ── Silent auto-sync ────────────────────────────────────────────────────────
-  // Trigger the on-open sync once, after the first page has rendered.
+  // ── On-open KoSync ──────────────────────────────────────────────────────────
+  // After the first page renders, launch the full KOReaderSyncActivity so the
+  // user gets WiFi selection + compare/upload UI rather than a silent attempt.
   if (!autoSyncTriggeredOnOpen && pageRendered.load(std::memory_order_acquire) && epub &&
       KOREADER_STORE.hasCredentials()) {
     autoSyncTriggeredOnOpen = true;
-    // A successful manual KOReader sync (KOReaderSyncActivity) sets this flag
-    // before handing back to us via replaceActivity. Skip the redundant
-    // on-open auto-sync and show OK directly.
     if (APP_STATE.kosyncJustSynced) {
+      // Returned from a manual sync that just completed — show OK icon, skip re-sync.
       APP_STATE.kosyncJustSynced = false;
       autoSyncState = AutoSyncState::OK;
       syncIconPagesRemaining = 5;
       requestUpdate();
     } else {
-      currentSyncIsInitial = true;
-      pendingAutoSync = true;
+      launchKOReaderSync();
+      return;
     }
   }
-
-  // Phase 1: compute xpath + hash under RenderLock (FrameBufferLoan needs it).
-  if (pendingAutoSync && !syncArgsReady) {
-    RenderLock lock(RenderLock::Mode::Try);
-    if (lock.ownsLock()) {
-      syncArgsReady = launchAutoSync();
-      pendingAutoSync = false;
-    }
-  }
-
-  // Phase 2a: kick off WiFi in the background (non-blocking).
-  // The ESP32 WiFi stack associates on its own task; we poll each loop tick.
-  if (syncArgsReady) {
-    syncArgsReady = false;
-    if (WiFi.status() == WL_CONNECTED) {
-      // Already connected — go straight to sync this tick.
-      wifiConnecting = false;
-      const bool ok = silentKoSyncUpload(syncDocHash, syncXpath, syncPct);
-      if (ok) {
-        autoSyncState = AutoSyncState::OK;
-        syncIconPagesRemaining = 5;
-        pagesSinceLastAutoSync = 0;
-      } else if (currentSyncIsInitial) {
-        autoSyncState = AutoSyncState::FAILED_ON_OPEN;
-        syncIconPagesRemaining = 5;
-      } else {
-        autoSyncState = AutoSyncState::FAILED_MID_READ;
-        syncIconPagesRemaining = 5;
-      }
-      currentSyncIsInitial = false;
-      requestUpdate();
-    } else {
-      silentWifiBegin();
-      wifiConnecting = true;
-      wifiWeConnected = true;
-      wifiConnectDeadline = millis() + WIFI_CONNECT_TIMEOUT_MS;
-    }
-  }
-
-  // Phase 2b: poll for WiFi association, then run TLS sync once connected.
-  // Runs each loop tick until connected or deadline passes — zero blocking.
-  if (wifiConnecting) {
-    if (WiFi.status() == WL_CONNECTED) {
-      wifiConnecting = false;
-      LOG_DBG("KOSync", "Auto-sync: WiFi up, syncing");
-      const bool ok = silentKoSyncUpload(syncDocHash, syncXpath, syncPct);
-      if (wifiWeConnected) { WiFi.disconnect(); wifiWeConnected = false; }
-      if (ok) {
-        autoSyncState = AutoSyncState::OK;
-        syncIconPagesRemaining = 5;
-        pagesSinceLastAutoSync = 0;
-      } else if (currentSyncIsInitial) {
-        autoSyncState = AutoSyncState::FAILED_ON_OPEN;
-        syncIconPagesRemaining = 5;
-      } else {
-        autoSyncState = AutoSyncState::FAILED_MID_READ;
-        syncIconPagesRemaining = 5;
-      }
-      currentSyncIsInitial = false;
-      requestUpdate();
-    } else if (millis() >= wifiConnectDeadline) {
-      wifiConnecting = false;
-      if (wifiWeConnected) { WiFi.disconnect(); wifiWeConnected = false; }
-      LOG_DBG("KOSync", "Auto-sync: WiFi timeout after %lums", WIFI_CONNECT_TIMEOUT_MS);
-      if (currentSyncIsInitial) { autoSyncState = AutoSyncState::FAILED_ON_OPEN; syncIconPagesRemaining = 5; }
-      else { autoSyncState = AutoSyncState::FAILED_MID_READ; syncIconPagesRemaining = 5; }
-      currentSyncIsInitial = false;
-      requestUpdate();
-    }
-  }
-  // ── End auto-sync ────────────────────────────────────────────────────────────
+  // ── End on-open KoSync ──────────────────────────────────────────────────────
 
   // Someone else turned the screen while this reader was stacked (the control
   // center's orientation tile). Reflow before the next render, or the page
@@ -1245,10 +1142,16 @@ void EpubReaderActivity::prepareForSleep() {
         APP_STATE.kosyncPendingDocHash = docHash;  // preserve for "already synced" display
         LOG_DBG("KOSync", "Sleep-sync: skipping re-arm — manual sync just completed");
       } else {
+        const int tocIdx = epub->getTocIndexForSpineIndex(currentSpineIndex);
         APP_STATE.kosyncUploadPending = true;
         APP_STATE.kosyncPendingXpath = localKoPos.xpath;
         APP_STATE.kosyncPendingPct = localKoPos.percentage;
         APP_STATE.kosyncPendingDocHash = docHash;
+        APP_STATE.kosyncPendingEpubPath = bookPath;
+        APP_STATE.kosyncPendingChapterName = (tocIdx >= 0) ? epub->getTocItem(tocIdx).title : "";
+        APP_STATE.kosyncPendingSpineIndex = currentSpineIndex;
+        APP_STATE.kosyncPendingPage = currentPage;
+        APP_STATE.kosyncPendingPageCount = totalPages;
         LOG_DBG("KOSync", "Sleep-sync queued: xpath=%s pct=%.3f hash=%s",
                 localKoPos.xpath.c_str(), localKoPos.percentage, docHash.c_str());
       }
@@ -2172,7 +2075,6 @@ void EpubReaderActivity::renderStatusBar() const {
 
   uint8_t syncIconState = 0;
   if (autoSyncState == AutoSyncState::OK) syncIconState = 1;
-  else if (autoSyncState == AutoSyncState::FAILED_ON_OPEN || autoSyncState == AutoSyncState::FAILED_MID_READ) syncIconState = 2;
 
   GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset, true, currentPageBookmarked,
                     section ? section->isBuilding() : false, syncIconState);

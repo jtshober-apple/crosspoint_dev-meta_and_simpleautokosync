@@ -55,31 +55,12 @@ class EpubReaderActivity final : public ReaderActivity {
   unsigned long bookmarkMessageTime = 0UL;
   bool pendingReadFolderMove = false;
 
-  // ── Silent auto-sync (KoSync) ──────────────────────────────────────────────
-  // State machine: open-book attempt → FAILED_ON_OPEN or OK;
-  // 30-page retry (when state != FAILED_MID_READ) → OK or FAILED_MID_READ.
-  enum class AutoSyncState : uint8_t { NEVER_TRIED, FAILED_ON_OPEN, FAILED_MID_READ, OK };
+  // ── KoSync status bar icon ────────────────────────────────────────────────
+  enum class AutoSyncState : uint8_t { NEVER_TRIED, OK };
   AutoSyncState autoSyncState = AutoSyncState::NEVER_TRIED;
-  int pagesSinceLastAutoSync = 0;
   // Page turns remaining before the sync status icon clears from the status bar.
-  // Set to a small count when a sync result arrives; counts down on each turn.
   int syncIconPagesRemaining = 0;
   bool autoSyncTriggeredOnOpen = false;  // guard: trigger open sync only once
-  bool pendingAutoSync = false;          // set when a sync should be kicked off
-  bool currentSyncIsInitial = false;     // true when the pending sync is the on-open attempt
-  bool syncArgsReady = false;            // params computed, WiFi start pending
-  std::string syncDocHash;               // document hash for pending sync
-  std::string syncXpath;                 // xpath for pending sync
-  float syncPct = 0.0f;                  // percentage for pending sync
-  // WiFi association polling: silentWifiBegin() was called; loop() polls
-  // WiFi.status() each tick rather than blocking the main task.
-  bool wifiConnecting = false;
-  unsigned long wifiConnectDeadline = 0;
-  bool wifiWeConnected = false;          // we started WiFi; we must disconnect after
-  static constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 20000;
-  // Computes sync params (hash, xpath, percentage) under the caller's RenderLock.
-  // Returns true when params are ready for the subsequent network phase.
-  bool launchAutoSync();
 
   // Toolbar reader menu (SETTINGS.readerMenuStyle == READER_MENU_TOOLBAR): drawn
   // over the page instead of pushing the full-screen list menu. Select opens the

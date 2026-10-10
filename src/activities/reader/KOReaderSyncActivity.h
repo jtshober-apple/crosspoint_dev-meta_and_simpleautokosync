@@ -22,9 +22,12 @@
  */
 class KOReaderSyncActivity final : public Activity, private UiAppHost {
  public:
+  // sleepAfterSync: when true the activity goes to sleep instead of returning to
+  // the reader after syncing.  Used by ActivityManager::goToSleep() to run the
+  // full sync UI before the sleep screen is shown.
   explicit KOReaderSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& epubPath,
                                 CrossPointPosition localPosition, SavedProgressPosition localKoPos,
-                                std::string localChapterName);
+                                std::string localChapterName, bool sleepAfterSync = false);
 
   void onEnter() override;
   void onExit() override;
@@ -75,6 +78,8 @@ class KOReaderSyncActivity final : public Activity, private UiAppHost {
   // WiFi.getMode() because performUpload() calls esp_wifi_stop() on the way out,
   // which makes WiFi.getMode() return WIFI_MODE_NULL.
   bool wifiActivated = false;
+  // When true, returnToReader() goes to sleep instead of reopening the epub.
+  bool goToSleepAfter = false;
 
   void onWifiSelectionComplete(bool success);
   void performSync();

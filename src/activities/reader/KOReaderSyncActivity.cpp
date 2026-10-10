@@ -52,7 +52,8 @@ const char* matchMethodName(const DocumentMatchMethod method) {
 
 KOReaderSyncActivity::KOReaderSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                            const std::string& epubPath, CrossPointPosition localPosition,
-                                           SavedProgressPosition localKoPos, std::string localChapterName)
+                                           SavedProgressPosition localKoPos, std::string localChapterName,
+                                           bool sleepAfterSync)
     : Activity("KOReaderSync", renderer, mappedInput),
       UiAppHost(renderer),
       epubPath(epubPath),
@@ -60,7 +61,8 @@ KOReaderSyncActivity::KOReaderSyncActivity(GfxRenderer& renderer, MappedInputMan
       localPosition(localPosition),
       remoteProgress{},
       remotePosition{},
-      localProgress(std::move(localKoPos)) {}
+      localProgress(std::move(localKoPos)),
+      goToSleepAfter(sleepAfterSync) {}
 
 void KOReaderSyncActivity::ensureEpubLoaded() {
   if (!epub) {
@@ -97,7 +99,13 @@ void KOReaderSyncActivity::saveProgressAndReturn(int spineIndex, int page) {
   returnToReader();
 }
 
-void KOReaderSyncActivity::returnToReader() { activityManager.goToReader(epubPath); }
+void KOReaderSyncActivity::returnToReader() {
+  if (goToSleepAfter) {
+    activityManager.goToSleep(false);
+  } else {
+    activityManager.goToReader(epubPath);
+  }
+}
 
 bool KOReaderSyncActivity::smartSyncEnabled() const {
   return KOREADER_STORE.getSyncBehavior() == KOReaderSyncBehavior::SMART;
@@ -441,7 +449,11 @@ void KOReaderSyncActivity::onExit() {
   if (wifiActivated) {
     WiFi.disconnect(false);
     delay(30);
-    silentRestartToReader();
+    // In sleep-after mode ActivityManager::goToSleep() handles the transition;
+    // no silent-reboot-to-reader is needed or wanted.
+    if (!goToSleepAfter) {
+      silentRestartToReader();
+    }
   }
 }
 

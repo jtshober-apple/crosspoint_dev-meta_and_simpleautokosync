@@ -33,6 +33,14 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   // MD5 document hash for the KoReader sync server, pre-computed on the main task
   // (so SleepActivity and any background logic never needs to re-read the EPUB from SD).
   std::string kosyncPendingDocHash;
+  // Epub path and reader position for the pending sleep-upload.
+  // Used by ActivityManager::goToSleep() to construct a KOReaderSyncActivity
+  // that completes the upload before showing the sleep screen.
+  std::string kosyncPendingEpubPath;
+  std::string kosyncPendingChapterName;
+  int kosyncPendingSpineIndex = 0;
+  int kosyncPendingPage = 0;
+  int kosyncPendingPageCount = 0;
   bool showBootScreen = true;
   // Transient (not serialized): set by KOReaderSyncActivity on a successful
   // manual upload so the next EpubReaderActivity skips the on-open auto-sync

@@ -57,6 +57,11 @@ void CrossPointState::toJson(JsonDocument& doc) const {
     doc["kosyncPendingXpath"] = kosyncPendingXpath;
     doc["kosyncPendingPct"] = kosyncPendingPct;
     doc["kosyncPendingDocHash"] = kosyncPendingDocHash;
+    doc["kosyncPendingEpubPath"] = kosyncPendingEpubPath;
+    doc["kosyncPendingChapterName"] = kosyncPendingChapterName;
+    doc["kosyncPendingSpineIndex"] = kosyncPendingSpineIndex;
+    doc["kosyncPendingPage"] = kosyncPendingPage;
+    doc["kosyncPendingPageCount"] = kosyncPendingPageCount;
   }
   doc["showBootScreen"] = showBootScreen;
 }
@@ -99,10 +104,20 @@ bool CrossPointState::fromJson(JsonVariantConst doc) {
   kosyncPendingXpath = doc["kosyncPendingXpath"] | "";
   kosyncPendingPct = doc["kosyncPendingPct"] | 0.0f;
   kosyncPendingDocHash = doc["kosyncPendingDocHash"] | "";
+  kosyncPendingEpubPath = doc["kosyncPendingEpubPath"] | "";
+  kosyncPendingChapterName = doc["kosyncPendingChapterName"] | "";
+  kosyncPendingSpineIndex = doc["kosyncPendingSpineIndex"] | 0;
+  kosyncPendingPage = doc["kosyncPendingPage"] | 0;
+  kosyncPendingPageCount = doc["kosyncPendingPageCount"] | 0;
   if (!kosyncUploadPending) {
     kosyncPendingXpath.clear();
     kosyncPendingPct = 0.0f;
     kosyncPendingDocHash.clear();
+    kosyncPendingEpubPath.clear();
+    kosyncPendingChapterName.clear();
+    kosyncPendingSpineIndex = 0;
+    kosyncPendingPage = 0;
+    kosyncPendingPageCount = 0;
   }
   showBootScreen = doc["showBootScreen"] | true;
   return true;
