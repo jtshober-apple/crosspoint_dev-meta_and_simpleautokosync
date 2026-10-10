@@ -277,8 +277,7 @@ void CarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
   const int titleY = rect.y + kTitleTopClearance;
   const Rect centerCoverSlotRect = computeCenterCoverSlotRect(renderer, rect, recentBooks);
   const int centerDrawY = centerCoverSlotRect.y;
-  const int sideMaxHeight = std::max(kNearSideInnerH, kNearSideOuterH);
-  const int sideTileY = centerDrawY + (kDisplayCenterH - sideMaxHeight) / 2;
+  const int sideTileY = centerDrawY + (kDisplayCenterH - kNearSideInnerH) / 2;
 
   const int centerX = centerCoverSlotRect.x;
   constexpr int kSideUnderlapPx = 12;  // pixels the side cover slides under the center cover
