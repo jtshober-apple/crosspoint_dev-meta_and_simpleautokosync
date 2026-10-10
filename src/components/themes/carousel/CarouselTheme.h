@@ -23,7 +23,7 @@ constexpr ThemeMetrics values = makeValues();
 
 class CarouselTheme : public LyraTheme {
  public:
-  static constexpr int kCenterCoverW = 340;
+  static constexpr int kCenterCoverW = 300;
   static constexpr int kCenterCoverH = CarouselMetrics::values.homeCoverHeight - 60;  // 540
   static constexpr int kCenterCoverVisualInset = 10;
   static constexpr int kBaseDisplayCenterW = (kCenterCoverW * 86) / 100;

@@ -363,10 +363,22 @@ void CarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
       HalFile file;
       if (Storage.openFileForRead("HOME", thumbPath, file)) {
         Bitmap bitmap(file);
-        if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+        if (bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0) {
           const int sideHeight = std::max(leftHeight, rightHeight);
+          const float srcW = static_cast<float>(bitmap.getWidth());
+          const float srcH = static_cast<float>(bitmap.getHeight());
+          const float srcRatio = srcW / srcH;
+          const float safeTargetH = sideHeight == 0 ? 1.0f : static_cast<float>(sideHeight);
+          const float targetRatio = static_cast<float>(width) / safeTargetH;
+          float cropX = 0.0f;
+          float cropY = 0.0f;
+          if (srcRatio > targetRatio) {
+            cropX = std::max(0.0f, 1.0f - (targetRatio / srcRatio));
+          } else if (srcRatio < targetRatio) {
+            cropY = std::max(0.0f, 1.0f - (srcRatio / targetRatio));
+          }
           renderer.fillRect(x, sideTileY, width, sideHeight, false);
-          renderer.drawBitmap(bitmap, x, sideTileY, width, sideHeight);
+          renderer.drawBitmap(bitmap, x, sideTileY, width, sideHeight, cropX, cropY);
           renderer.maskRoundedRectOutsideCorners(x, sideTileY, width, sideHeight, kSideCornerRadius, Color::White);
           drawPerspectiveOutline(renderer, x, sideTileY, width, leftHeight, rightHeight);
           return true;
